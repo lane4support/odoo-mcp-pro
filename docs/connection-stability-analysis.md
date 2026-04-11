@@ -231,3 +231,104 @@ This is a known bug across ALL Claude clients:
 - Claude Code `/mcp reconnect` doesn't refresh tokens ([#19481](https://github.com/anthropics/claude-code/issues/19481))
 - Claude Desktop OAuth breaks after updates ([claude-ai-mcp #5](https://github.com/anthropics/claude-ai-mcp/issues/5))
 - These are Anthropic bugs. Our best mitigation is longer-lived access tokens.
+
+---
+
+## 6. Monitoring & Health System
+
+### Goal
+Know the system is healthy without users telling us. Three levels:
+- **Green**: everything working, no action needed
+- **Orange**: degraded, investigate within hours
+- **Red**: broken, fix immediately
+
+### 6.1 PostHog Events (implemented)
+
+Server-side events, privacy-respecting (zitadel_sub as distinct_id, no PII in properties):
+
+| Event | Meaning | Healthy signal |
+|-------|---------|----------------|
+| `mcp_tool_called` | User made an MCP tool call | Steady daily volume |
+| `auth_login_success` | User logged into admin panel | Should match callback count |
+| `auth_callback_error` | Zitadel returned OAuth error | Should be 0 |
+| `auth_state_invalid` | PKCE state lost (deploy during login) | Should be 0 |
+| `auth_token_exchange_failed` | Code-to-token exchange failed | Should be 0 |
+| `auth_userinfo_failed` | Zitadel userinfo endpoint failed | Should be 0 |
+
+### 6.2 PostHog Alerts to Set Up
+
+Create these alerts in PostHog (Alerts > New):
+
+| Alert | Condition | Level |
+|-------|-----------|-------|
+| "Auth failures" | Any `auth_*_failed` or `auth_*_error` > 0 in 1 hour | Red |
+| "No tool calls" | `mcp_tool_called` count = 0 for 6 hours (during business hours) | Orange |
+| "State lost during deploy" | `auth_state_invalid` > 0 in 1 hour | Orange |
+| "Usage drop" | `mcp_tool_called` DAU drops > 50% week-over-week | Orange |
+
+### 6.3 Infrastructure Health (existing)
+
+Already monitored via deploy.sh smoke tests:
+
+| Check | Endpoint | Expected | Frequency |
+|-------|----------|----------|-----------|
+| MCP server up | `/.well-known/oauth-protected-resource` | 200 | Every deploy + Caddy health every 5s |
+| OAuth discovery | `/.well-known/oauth-authorization-server` | 200 | Every deploy |
+| DCR works | `POST /register` | 200 | Every deploy |
+| Zitadel proxy | `/authorize` | 301/302 | Every deploy |
+
+### 6.4 Missing Monitoring (to add)
+
+| What | How | Priority |
+|------|-----|----------|
+| **Uptime monitoring** | External service (e.g. BetterUptime, UptimeRobot) pinging `/.well-known/oauth-protected-resource` every 60s. Alert if down > 2 min. | P0 |
+| **Zitadel health** | Ping `https://odoo-mcp-pro-xywtof.eu1.zitadel.cloud/.well-known/openid-configuration` every 5 min | P1 |
+| **Postgres health** | Docker healthcheck already runs `pg_isready`. Add PostHog event on connection pool exhaustion. | P2 |
+| **Deploy success tracking** | Log deploy events to PostHog: `deploy_started`, `deploy_completed`, `deploy_failed` | P1 |
+| **SSL certificate expiry** | Caddy auto-renews, but monitor cert expiry as backup | P2 |
+
+### 6.5 Dashboard: "Is the system healthy?"
+
+Build a PostHog dashboard called "MCP System Health" with these panels:
+
+1. **Tool calls per day** (trend, last 14 days) - should be growing or stable
+2. **Unique active users per day** (trend, DAU) - our key metric
+3. **Auth failures** (trend, all auth_*_failed events) - should be flat zero
+4. **Login success rate** (formula: auth_login_success / (auth_login_success + all failures)) - should be > 95%
+5. **Tool call errors** (mcp_tool_called where error=true) - should be < 5% of total
+6. **New registrations per day** (from Postgres, or add PostHog event)
+
+### 6.6 Future: Public Status Page
+
+When we have enough users, consider a public status page at `status.pantalytics.com`:
+- Shows current status of MCP server, Zitadel, Odoo connectivity
+- Historical uptime percentage
+- Incident history
+- Can be built with BetterUptime, Instatus, or custom with PostHog data
+
+---
+
+## 7. Stability Roadmap
+
+### Week 1 (now)
+- [ ] Increase Zitadel token lifetime to 48h
+- [ ] Set up external uptime monitoring (BetterUptime free tier)
+- [ ] Create PostHog "MCP System Health" dashboard
+- [ ] Set up PostHog alerts for auth failures
+
+### Week 2
+- [ ] Move PKCE state to Postgres
+- [ ] Add deploy events to PostHog
+- [ ] Keep old container running 30s after deploy
+- [ ] Set up custom SMTP in Zitadel via Brevo
+
+### Week 3
+- [ ] Cache token introspection (60s)
+- [ ] Add retry logic to introspection
+- [ ] Error pages instead of silent redirect loops
+- [ ] Handle OPTIONS on callback
+
+### Ongoing
+- [ ] Review PostHog dashboard weekly
+- [ ] Respond to alerts within 4 hours
+- [ ] Document incidents and root causes
