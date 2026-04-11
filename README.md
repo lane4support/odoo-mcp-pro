@@ -7,7 +7,7 @@
 <h1 align="center">odoo-mcp-pro</h1>
 
 <p align="center">
-  Talk to your Odoo ERP using natural language.<br/>
+  AI connector for Odoo ERP -- talk to your business data using natural language.<br/>
   Search, create, update, and manage records -- just ask.
 </p>
 
@@ -32,7 +32,7 @@
 
 Odoo is powerful. AI is powerful. Together they're better.
 
-odoo-mcp-pro connects your AI assistant to your Odoo ERP, so you can use natural language as an interface to your business data. Not to replace Odoo's UI -- but to give you a second interface that's faster for many tasks. Works with Claude, ChatGPT, Cursor, Windsurf, and any other MCP-compatible AI tool.
+odoo-mcp-pro is an AI connector for Odoo that uses MCP (Model Context Protocol) -- an open standard that lets AI assistants talk to external systems. It connects your AI assistant to your Odoo ERP, so you can use natural language as an interface to your business data. Not to replace Odoo's UI -- but to give you a second interface that's faster for many tasks. Works with Claude, ChatGPT, Cursor, Windsurf, and any other MCP-compatible AI tool.
 
 > **"Show me all unpaid invoices over 5,000 EUR from Q4"** -- your AI queries your Odoo instance directly and returns the results.
 
@@ -73,7 +73,7 @@ See [SETUP.md](SETUP.md) for the deployment guide.
 
 ## How it works
 
-odoo-mcp-pro is an [MCP server](https://modelcontextprotocol.io) -- an open standard that lets AI assistants call external tools. It exposes 6 tools that your AI can call based on your questions:
+odoo-mcp-pro is an Odoo connector that implements [MCP (Model Context Protocol)](https://modelcontextprotocol.io) -- an open standard that lets AI assistants call external tools. It exposes 6 tools that your AI can call based on your questions:
 
 | Tool | What it does |
 |------|-------------|

@@ -1,10 +1,10 @@
-Connect Claude AI to your Odoo 19 database in 5 minutes -- open-source MCP server
+Connect Claude AI to your Odoo 19 database in 5 minutes -- AI connector for Odoo via MCP
 
-Tags: odoo19, api, json2, integration, ai, claude, mcp
+Tags: odoo19, api, json2, integration, ai, claude, mcp, connector, odoo-connector
 
 Hi everyone,
 
-We built an open-source tool that lets you talk to your Odoo database in plain English through Claude AI. Ask questions like "show me all unpaid invoices over 5,000 EUR from Q4" and get instant answers -- no exports, no filters, no domain syntax.
+We built an AI connector for Odoo that lets you talk to your database in plain English through Claude AI. Ask questions like "show me all unpaid invoices over 5,000 EUR from Q4" and get instant answers -- no exports, no filters, no domain syntax.
 
 It's called **odoo-mcp-pro** and it's free to use: https://github.com/pantalytics/odoo-mcp-pro
 
@@ -27,7 +27,7 @@ More examples:
 
 ## How it works
 
-odoo-mcp-pro uses MCP (Model Context Protocol) -- an open standard by Anthropic that lets AI assistants call external tools. The server exposes 6 tools (search, get, create, update, delete, list models) that Claude can call based on your natural language questions.
+odoo-mcp-pro is an Odoo connector that uses MCP (Model Context Protocol) -- an open standard by Anthropic that lets AI assistants call external tools. The connector exposes 6 tools (search, get, create, update, delete, list models) that Claude can call based on your natural language questions.
 
 Under the hood it uses Odoo 19's new JSON/2 API, which means:
 - No custom Odoo modules needed

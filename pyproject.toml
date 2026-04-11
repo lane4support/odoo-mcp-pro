@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mcp-server-odoo"
 version = "1.2.1"
-description = "A Model Context Protocol server for Odoo ERP systems"
+description = "AI connector for Odoo ERP -- connect Claude, ChatGPT, and other AI tools to Odoo via MCP (Model Context Protocol)"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -15,7 +15,7 @@ maintainers = [
     { name = "Andrey Ivanov", email = "ivnv.xd@gmail.com" }
 ]
 license = { text = "PolyForm-Noncommercial-1.0.0" }
-keywords = ["mcp", "odoo", "erp", "model-context-protocol", "ai", "llm", "claude", "anthropic"]
+keywords = ["mcp", "odoo", "erp", "model-context-protocol", "ai", "llm", "claude", "anthropic", "connector", "odoo-connector", "integration", "odoo-integration", "erp-connector"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
