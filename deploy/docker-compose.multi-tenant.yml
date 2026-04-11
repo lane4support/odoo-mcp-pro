@@ -82,8 +82,6 @@ services:
       ODOO_MCP_TRANSPORT: streamable-http
       ODOO_MCP_HOST: "0.0.0.0"
       ODOO_MCP_PORT: "8000"
-      # Placeholder for OdooConfig (not used in multi-tenant mode, but required by loader)
-      ODOO_URL: "https://placeholder.odoo.com"
     networks:
       - mcp-net
 

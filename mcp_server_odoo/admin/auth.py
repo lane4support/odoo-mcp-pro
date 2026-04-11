@@ -27,8 +27,6 @@ SESSION_COOKIE = "admin_session"
 SESSION_MAX_AGE = 8 * 60 * 60
 
 # PKCE state: stored in Postgres via db_manager (survives blue-green deploys)
-# Fallback in-memory dict for when db_manager is not yet available
-_pending_auth: dict[str, dict] = {}
 _db_manager = None
 
 
@@ -217,10 +215,7 @@ def register_auth_routes(app, db_manager, zitadel_issuer_url: str):
 
         # Store PKCE verifier keyed by state (in Postgres, survives deploys)
         next_url = request.query_params.get("next", "")
-        if _db_manager:
-            await _db_manager.store_pending_auth(state, code_verifier, redirect_uri, next_url)
-        else:
-            _pending_auth[state] = {"code_verifier": code_verifier, "redirect_uri": redirect_uri, "next": next_url}
+        await _db_manager.store_pending_auth(state, code_verifier, redirect_uri, next_url)
 
         # Build authorization URL
         action = request.query_params.get("action", "")
@@ -272,10 +267,7 @@ def register_auth_routes(app, db_manager, zitadel_issuer_url: str):
             return RedirectResponse(url="/admin/login", status_code=302)
 
         # Validate state and get PKCE verifier (from Postgres, survives deploys)
-        if _db_manager:
-            pending = await _db_manager.pop_pending_auth(state)
-        else:
-            pending = _pending_auth.pop(state, None)
+        pending = await _db_manager.pop_pending_auth(state)
         if not pending:
             logger.warning("Invalid or expired OAuth state")
             track_event("auth_state_invalid")
