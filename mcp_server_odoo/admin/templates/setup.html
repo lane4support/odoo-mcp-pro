@@ -12,29 +12,29 @@
                 <h2 class="text-sm font-medium text-white/40 uppercase tracking-wider">Active Connection</h2>
                 <div class="flex items-center gap-2">
                     {% if connection.last_verified_at and not connection.last_error %}
-                    <span class="flex items-center gap-1.5 text-xs text-green-400">
-                        <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span> Connected
+                    <span class="flex items-center gap-1.5 text-sm text-green-400">
+                        <span class="w-2 h-2 rounded-full bg-green-400"></span> Connected
                     </span>
                     {% elif connection.last_error %}
-                    <span class="flex items-center gap-1.5 text-xs text-red-400">
-                        <span class="w-1.5 h-1.5 rounded-full bg-red-400"></span> Error
+                    <span class="flex items-center gap-1.5 text-sm text-red-400">
+                        <span class="w-2 h-2 rounded-full bg-red-400"></span> Error
                     </span>
                     {% endif %}
                 </div>
             </div>
             <div class="bg-brand-surface rounded-xl border border-white/10">
                 <div class="px-5 py-4">
-                    <p class="text-base text-white font-medium">{{ connection.odoo_url|replace('https://', '')|replace('http://', '') }}</p>
-                    <p class="text-xs text-white/30 mt-1">
+                    <p class="text-lg text-white font-medium">{{ connection.odoo_url|replace('https://', '')|replace('http://', '') }}</p>
+                    <p class="text-sm text-white/30 mt-1">
                         {{ connection.odoo_version or 'Version unknown' }}
                         {% if connection.odoo_hosting %} &middot; {{ connection.odoo_hosting }}{% endif %}
                         {% if connection.odoo_db %} &middot; db: {{ connection.odoo_db }}{% endif %}
                     </p>
                     {% if connection.last_error %}
-                    <div class="mt-3 text-xs text-red-400/80 bg-red-900/20 rounded-lg px-3 py-2">{{ connection.last_error }}</div>
+                    <div class="mt-3 text-sm text-red-400/80 bg-red-900/20 rounded-lg px-3 py-2">{{ connection.last_error }}</div>
                     {% endif %}
                 </div>
-                <div class="px-5 py-2.5 border-t border-white/5 flex items-center gap-4 text-xs">
+                <div class="px-5 py-3 border-t border-white/5 flex items-center gap-4 text-sm">
                     <form method="post" action="/admin/setup/verify" class="inline leading-none">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <button type="submit" class="text-white/40 hover:text-white transition-colors leading-none">Test</button>
@@ -53,27 +53,27 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                         <input type="hidden" name="profile_label" value="">
                         <div>
-                            <label class="block text-xs font-medium text-white/50 mb-1.5">Odoo URL</label>
+                            <label class="block text-sm font-medium text-white/50 mb-1.5">Odoo URL</label>
                             <input type="url" name="odoo_url" value="{{ connection.odoo_url }}"
                                    class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent transition-colors">
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-white/50 mb-1.5">API Key</label>
+                            <label class="block text-sm font-medium text-white/50 mb-1.5">API Key</label>
                             <input type="password" name="odoo_api_key" placeholder="Leave empty to keep current key"
                                    class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white font-mono focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
                         </div>
-                        <details class="text-xs">
+                        <details class="text-sm">
                             <summary class="text-white/25 cursor-pointer hover:text-white/40 transition-colors">Advanced</summary>
                             <div class="mt-3">
-                                <label class="block text-xs font-medium text-white/50 mb-1.5">Database Name</label>
+                                <label class="block text-sm font-medium text-white/50 mb-1.5">Database Name</label>
                                 <input type="text" name="odoo_db" value="{{ connection.odoo_db or '' }}" placeholder="Leave empty for auto-detect"
                                        class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
                             </div>
                         </details>
                         <div class="flex gap-3 pt-1">
-                            <button type="submit" class="flex-1 rounded-lg bg-brand-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-accent-hover transition-colors">Save</button>
+                            <button type="submit" class="rounded-lg bg-brand-accent px-5 py-2 text-sm font-medium text-white hover:bg-brand-accent-hover transition-colors">Save</button>
                             <button type="button" onclick="document.getElementById('edit-form').classList.add('hidden')"
-                                    class="px-4 py-2.5 text-sm text-white/30 hover:text-white/60 transition-colors">Cancel</button>
+                                    class="px-4 py-2 text-sm text-white/30 hover:text-white/60 transition-colors">Cancel</button>
                         </div>
                     </form>
                 </div>
@@ -94,16 +94,16 @@
             <h2 class="text-sm font-medium text-white/40 uppercase tracking-wider mb-3">Other Connections</h2>
             <div class="bg-brand-surface rounded-xl border border-white/10 divide-y divide-white/5">
                 {% for profile in other_profiles %}
-                <div class="flex items-center justify-between px-5 py-3.5">
+                <div class="flex items-center justify-between px-5 py-4">
                     <div class="min-w-0 flex-1">
                         <p class="text-sm text-white/70">{{ profile.label }}</p>
-                        <p class="text-xs text-white/25 mt-0.5">{{ profile.odoo_url|replace('https://', '')|replace('http://', '') }}</p>
+                        <p class="text-sm text-white/25 mt-0.5">{{ profile.odoo_url|replace('https://', '')|replace('http://', '') }}</p>
                     </div>
                     <div class="ml-4 flex items-center gap-2">
                         <form method="post" action="/admin/setup/switch" class="inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <input type="hidden" name="profile_id" value="{{ profile.id }}">
-                            <button type="submit" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 text-white/60 hover:bg-white/15 hover:text-white transition-colors">
+                            <button type="submit" class="px-3 py-1.5 text-sm font-medium rounded-lg bg-white/10 text-white/60 hover:bg-white/15 hover:text-white transition-colors">
                                 Switch
                             </button>
                         </form>
@@ -112,7 +112,7 @@
                             <input type="hidden" name="profile_id" value="{{ profile.id }}">
                             <button type="submit" onclick="return confirm('Delete {{ profile.label }}?')"
                                     class="p-1.5 text-white/15 hover:text-red-400 transition-colors" title="Delete">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                                 </svg>
                             </button>
@@ -134,41 +134,41 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
                     <div>
-                        <label class="block text-xs font-medium text-white/50 mb-1.5">Label</label>
+                        <label class="block text-sm font-medium text-white/50 mb-1.5">Label</label>
                         <input type="text" name="profile_label" placeholder="e.g. My Company, Client X"
-                               class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
+                               class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2.5 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-white/50 mb-1.5">Odoo URL</label>
+                        <label class="block text-sm font-medium text-white/50 mb-1.5">Odoo URL</label>
                         <input type="url" name="odoo_url" required placeholder="https://mycompany.odoo.com"
-                               class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
+                               class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2.5 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-white/50 mb-1.5">API Key</label>
+                        <label class="block text-sm font-medium text-white/50 mb-1.5">API Key</label>
                         <input type="password" name="odoo_api_key" required placeholder="Paste your Odoo API key"
-                               class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white font-mono focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
-                        <p class="mt-1.5 text-xs text-white/25">In Odoo: Profile picture &rarr; My Profile &rarr; Account Security &rarr; New API Key</p>
+                               class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2.5 text-sm text-white font-mono focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
+                        <p class="mt-1.5 text-sm text-white/25">In Odoo: Profile picture &rarr; My Profile &rarr; Account Security &rarr; New API Key</p>
                     </div>
 
-                    <details class="text-xs">
+                    <details class="text-sm">
                         <summary class="text-white/25 cursor-pointer hover:text-white/40 transition-colors">Advanced</summary>
                         <div class="mt-3">
-                            <label class="block text-xs font-medium text-white/50 mb-1.5">Database Name <span class="text-white/20">(self-hosted only)</span></label>
+                            <label class="block text-sm font-medium text-white/50 mb-1.5">Database Name <span class="text-white/20">(self-hosted only)</span></label>
                             <input type="text" name="odoo_db" placeholder="Leave empty for auto-detect"
-                                   class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
+                                   class="w-full rounded-lg border border-white/10 bg-brand-bg px-3 py-2.5 text-sm text-white focus:border-brand-accent focus:ring-1 focus:ring-brand-accent placeholder-white/20 transition-colors">
                         </div>
                     </details>
 
                     <div class="flex gap-3 pt-1">
                         <button type="submit"
-                                class="rounded-lg bg-brand-accent px-5 py-2 text-sm font-medium text-white hover:bg-brand-accent-hover transition-colors">
+                                class="rounded-lg bg-brand-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-accent-hover transition-colors">
                             Save
                         </button>
                         {% if connection %}
                         <button type="button" onclick="document.getElementById('connection-form-section').classList.add('hidden'); document.getElementById('add-connection-btn').classList.remove('hidden')"
-                                class="px-4 py-2 text-sm text-white/30 hover:text-white/60 transition-colors">
+                                class="px-4 py-2.5 text-sm text-white/30 hover:text-white/60 transition-colors">
                             Cancel
                         </button>
                         {% endif %}
@@ -180,7 +180,7 @@
         <!-- Add Connection button -->
         {% if connection %}
         <button onclick="showAddForm()" id="add-connection-btn"
-                class="w-full rounded-xl border border-dashed border-white/10 px-5 py-3 text-sm text-white/30 hover:text-white/50 hover:border-white/20 transition-colors text-center">
+                class="w-full rounded-xl border border-dashed border-white/10 px-5 py-4 text-sm text-white/30 hover:text-white/50 hover:border-white/20 transition-colors text-center">
             + Add another connection
         </button>
         {% endif %}
@@ -194,29 +194,29 @@
                     <!-- Claude -->
                     <div>
                         <div class="flex items-center gap-2 mb-2">
-                            <span class="text-sm font-medium text-white">Claude</span>
+                            <span class="text-base font-medium text-white">Claude</span>
                             <span class="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-green-900/60 text-green-300 uppercase">Supported</span>
                         </div>
                         <!-- Mobile notice -->
                         <div class="lg:hidden bg-amber-900/30 border border-amber-500/30 rounded-lg px-4 py-3 mb-3">
-                            <p class="text-xs text-amber-200/80">
+                            <p class="text-sm text-amber-200/80">
                                 <strong class="text-amber-200">On your phone?</strong>
                                 Open <strong>claude.ai</strong> in a desktop browser to add MCP connectors.
                             </p>
                         </div>
                         <details>
-                            <summary class="text-xs text-white/40 cursor-pointer hover:text-white/60 transition-colors">Setup instructions</summary>
-                            <ol class="mt-3 space-y-2 text-sm text-white/60">
+                            <summary class="text-sm text-white/40 cursor-pointer hover:text-white/60 transition-colors">Setup instructions</summary>
+                            <ol class="mt-3 space-y-2.5 text-sm text-white/60">
                                 <li>1. Go to <strong class="text-white">claude.ai</strong> and click <strong class="text-white">MCP connectors</strong></li>
                                 <li>2. Click <strong class="text-white">Add custom connector</strong></li>
-                                <li>3. Name: <code class="bg-white/5 px-1.5 py-0.5 rounded text-xs text-white">Odoo</code> &nbsp; URL: <code id="mcp-url" class="bg-white/5 px-1.5 py-0.5 rounded text-xs text-white">{{ mcp_server_url }}</code>
-                                    <button onclick="navigator.clipboard.writeText(document.getElementById('mcp-url').textContent.trim())" class="text-brand-accent text-xs ml-1">copy</button>
+                                <li>3. Name: <code class="bg-white/5 px-1.5 py-0.5 rounded text-sm text-white">Odoo</code> &nbsp; URL: <code id="mcp-url" class="bg-white/5 px-1.5 py-0.5 rounded text-sm text-white">{{ mcp_server_url }}</code>
+                                    <button onclick="navigator.clipboard.writeText(document.getElementById('mcp-url').textContent.trim())" class="text-brand-accent text-sm ml-1">copy</button>
                                 </li>
                                 <li>4. Click <strong class="text-white">Add</strong>, then <strong class="text-white">Connect</strong></li>
                                 <li>5. Sign in with the same account you used here</li>
                                 <li>6. Approve the popup to connect</li>
                             </ol>
-                            <p class="text-xs text-white/25 mt-2">No Client ID needed. Changed settings? Disconnect and reconnect in Claude.</p>
+                            <p class="text-sm text-white/25 mt-3">No Client ID needed. Changed settings? Disconnect and reconnect in Claude.</p>
                         </details>
                     </div>
 
@@ -224,8 +224,8 @@
 
                     <!-- Other AI platforms -->
                     <details>
-                        <summary class="text-xs text-white/30 cursor-pointer hover:text-white/50 transition-colors">Other AI platforms (ChatGPT, Gemini, Copilot, Le Chat)</summary>
-                        <div class="mt-3 space-y-3 text-xs text-white/40">
+                        <summary class="text-sm text-white/30 cursor-pointer hover:text-white/50 transition-colors">Other AI platforms (ChatGPT, Gemini, Copilot, Le Chat)</summary>
+                        <div class="mt-3 space-y-3 text-sm text-white/40">
                             <p><strong class="text-white/60">ChatGPT</strong> &middot; <a href="https://platform.openai.com/docs/guides/tools-connectors-mcp" target="_blank" class="text-brand-accent hover:underline">OpenAI MCP docs</a></p>
                             <p><strong class="text-white/60">Gemini CLI</strong> &middot; <a href="https://geminicli.com/docs/tools/mcp-server/" target="_blank" class="text-brand-accent hover:underline">Gemini MCP docs</a></p>
                             <p><strong class="text-white/60">Microsoft Copilot</strong> &middot; <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/mcp-add-existing-server-to-agent" target="_blank" class="text-brand-accent hover:underline">Copilot Studio MCP docs</a></p>
@@ -240,27 +240,27 @@
 
         <!-- Help & Security (collapsed) -->
         <details class="group">
-            <summary class="text-xs text-white/25 cursor-pointer hover:text-white/40 transition-colors">Help, security & access control</summary>
+            <summary class="text-sm text-white/25 cursor-pointer hover:text-white/40 transition-colors">Help, security & access control</summary>
             <div class="mt-4 space-y-4">
                 <div class="bg-brand-surface rounded-xl border border-white/10 px-5 py-4 space-y-3">
                     <div class="flex items-start gap-2">
                         <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <p class="text-xs text-white/50"><strong class="text-white/70">No Odoo module needed.</strong> Works with your existing Odoo installation.</p>
+                        <p class="text-sm text-white/50"><strong class="text-white/70">No Odoo module needed.</strong> Works with your existing Odoo installation.</p>
                     </div>
                     <div class="flex items-start gap-2">
                         <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <p class="text-xs text-white/50"><strong class="text-white/70">API key permissions.</strong> Your AI inherits your Odoo user permissions. Create a restricted user for limited access.</p>
+                        <p class="text-sm text-white/50"><strong class="text-white/70">API key permissions.</strong> Your AI inherits your Odoo user permissions. Create a restricted user for limited access.</p>
                     </div>
                     <div class="flex items-start gap-2">
                         <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <p class="text-xs text-white/50"><strong class="text-white/70">Per-tool approval.</strong> Claude lets you allow, require approval, or block each tool individually.</p>
+                        <p class="text-sm text-white/50"><strong class="text-white/70">Per-tool approval.</strong> Claude lets you allow, require approval, or block each tool individually.</p>
                     </div>
                     <div class="flex items-start gap-2">
                         <svg class="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <p class="text-xs text-white/50"><strong class="text-white/70">Encrypted at rest.</strong> Your API key is encrypted and only used server-side. Revoke in Odoo at any time.</p>
+                        <p class="text-sm text-white/50"><strong class="text-white/70">Encrypted at rest.</strong> Your API key is encrypted and only used server-side. Revoke in Odoo at any time.</p>
                     </div>
                 </div>
-                <p class="text-xs text-white/25 text-center">
+                <p class="text-sm text-white/25 text-center">
                     Need help? <a href="mailto:rutger@pantalytics.com" class="text-brand-accent hover:underline">rutger@pantalytics.com</a>
                 </p>
             </div>
@@ -274,7 +274,7 @@
                     <svg class="w-5 h-5 text-white/40 group-hover:text-white/70 transition-colors" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                     <div>
                         <p class="text-sm text-white/60 group-hover:text-white/80 transition-colors">Like Odoo MCP? Star us on GitHub</p>
-                        <p class="text-xs text-white/25">Open source, community-driven</p>
+                        <p class="text-sm text-white/25">Open source, community-driven</p>
                     </div>
                 </div>
                 <svg class="w-4 h-4 text-white/20 group-hover:text-white/40 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -284,7 +284,7 @@
         </a>
 
         <!-- Footer -->
-        <p class="text-xs text-white/15 text-center pb-4">
+        <p class="text-sm text-white/15 text-center pb-4">
             Odoo MCP by Pantalytics &middot; v1.2.1
         </p>
     </div>
