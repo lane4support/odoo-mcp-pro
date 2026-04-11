@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 COMPOSE="docker compose -f docker-compose.multi-tenant.yml"
+DOMAIN="${DOMAIN:-mcp.pantalytics.com}"
 
 # Determine which slot is currently running
 if docker inspect mcp-blue --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
@@ -15,7 +16,7 @@ else
     NEW=mcp-blue
 fi
 
-echo "==> Current: $OLD → deploying: $NEW"
+echo "==> Current: $OLD, deploying: $NEW"
 
 # Pull latest code
 echo "==> Pulling latest code..."
@@ -45,15 +46,18 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# Remove the old container (stop + rm) so Caddy DNS doesn't try to resolve it
+# Drain: keep old container running 30s to finish in-flight requests
+echo "==> Draining $OLD for 30s..."
+sleep 30
+
+# Remove the old container
 echo "==> Removing $OLD..."
 $COMPOSE rm -f -s $OLD
 
-# Wait for Caddy to pick up the new upstream
+# Wait for Caddy DNS
 sleep 5
 
-# Smoke test: verify critical endpoints through Caddy
-DOMAIN="${DOMAIN:-mcp.pantalytics.com}"
+# Smoke tests
 echo "==> Running smoke tests on $DOMAIN..."
 FAILED=0
 for ENDPOINT in \
@@ -69,7 +73,6 @@ for ENDPOINT in \
     fi
 done
 
-# Test OAuth proxy to Zitadel (should return 302 or 400, NOT 404/502)
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$DOMAIN/authorize?response_type=code&client_id=test" 2>/dev/null || echo "000")
 if [ "$CODE" = "404" ] || [ "$CODE" = "502" ] || [ "$CODE" = "000" ]; then
     echo "    FAIL: /authorize returned $CODE (Zitadel proxy broken)"
@@ -78,7 +81,6 @@ else
     echo "    OK: /authorize (returned $CODE)"
 fi
 
-# Test DCR endpoint (POST)
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "https://$DOMAIN/register" \
     -H "Content-Type: application/json" \
     -d '{"redirect_uris":["https://test.example.com/cb"],"client_name":"smoke-test"}' 2>/dev/null || echo "000")
