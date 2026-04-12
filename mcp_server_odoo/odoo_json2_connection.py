@@ -438,6 +438,36 @@ class OdooJSON2Connection:
         logger.info(f"Bulk created {len(result)} {model} record(s)")
         return result
 
+    def load_records(
+        self,
+        model: str,
+        fields: List[str],
+        data: List[List[str]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Import records using Odoo's load() method with external ID support.
+
+        Args:
+            model: Odoo model name (e.g., 'res.partner')
+            fields: List of field names. Use 'id' for external ID column.
+            data: List of rows, each row is a list of string values.
+            context: Optional context dict (e.g., {'tracking_disable': True})
+
+        Returns:
+            Dict with 'ids' (created/updated record IDs) and 'messages' (errors)
+        """
+        kwargs: Dict[str, Any] = {"fields": fields, "data": data}
+        if context:
+            kwargs["context"] = context
+        result = self._call(model, "load", **kwargs)
+        self._fields_cache.pop(model, None)
+        logger.info(
+            f"Loaded {len(data)} row(s) into {model}: "
+            f"{len(result.get('ids', []))} OK, "
+            f"{len(result.get('messages', []))} messages"
+        )
+        return result
+
     def write(self, model: str, ids: List[int], values: Dict[str, Any]) -> bool:
         """Update existing records.
 

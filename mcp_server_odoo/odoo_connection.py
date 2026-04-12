@@ -999,6 +999,51 @@ class OdooConnection:
             logger.error(f"Failed to bulk create {model} records: {e}")
             raise
 
+    def load_records(
+        self,
+        model: str,
+        fields: List[str],
+        data: List[List[str]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Import records using Odoo's load() method with external ID support.
+
+        This wraps Odoo's native load() ORM method, which supports:
+        - Idempotent upsert via external IDs (column name 'id')
+        - Relational field resolution via external IDs (e.g., 'parent_id/id')
+        - Batch processing with per-row error reporting
+
+        Args:
+            model: Odoo model name (e.g., 'res.partner')
+            fields: List of field names. Use 'id' for external ID column.
+                    Use 'field/id' to reference related records by external ID.
+            data: List of rows, each row is a list of string values.
+                  Values must be strings (Odoo load() expects strings).
+            context: Optional context dict (e.g., {'tracking_disable': True})
+
+        Returns:
+            Dict with 'ids' (created/updated record IDs) and 'messages' (errors)
+
+        Raises:
+            OdooConnectionError: If the load operation fails
+        """
+        try:
+            with self._performance_manager.monitor.track_operation(f"load_{model}"):
+                kwargs = {}
+                if context:
+                    kwargs["context"] = context
+                result = self.execute_kw(model, "load", [fields, data], kwargs)
+                self._performance_manager.invalidate_record_cache(model)
+                logger.info(
+                    f"Loaded {len(data)} row(s) into {model}: "
+                    f"{len(result.get('ids', []))} OK, "
+                    f"{len(result.get('messages', []))} messages"
+                )
+                return result
+        except Exception as e:
+            logger.error(f"Failed to load records into {model}: {e}")
+            raise
+
     def write(self, model: str, ids: List[int], values: Dict[str, Any]) -> bool:
         """Update existing records.
 

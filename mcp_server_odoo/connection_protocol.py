@@ -60,6 +60,14 @@ class OdooConnectionProtocol(Protocol):
 
     def create_bulk(self, model: str, vals_list: List[Dict[str, Any]]) -> List[int]: ...
 
+    def load_records(
+        self,
+        model: str,
+        fields: List[str],
+        data: List[List[str]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]: ...
+
     def write(self, model: str, ids: List[int], values: Dict[str, Any]) -> bool: ...
 
     def unlink(self, model: str, ids: List[int]) -> bool: ...
