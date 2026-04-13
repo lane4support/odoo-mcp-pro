@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict
 
+from .usage import track_event
+
 from .access_control import AccessController
 from .config import OdooConfig
 from .connection_protocol import OdooConnectionProtocol
@@ -98,6 +100,7 @@ class ConnectionRegistry:
         try:
             api_version, server_version = detect_api_version(user_conn.odoo_url)
         except Exception as e:
+            track_event("connection_error", distinct_id=zitadel_sub, properties={"type": "unreachable", "url": user_conn.odoo_url})
             raise OdooConnectionError(
                 f"Cannot reach your Odoo server at {user_conn.odoo_url}. "
                 f"Please check that the URL is correct and the server is online. "
@@ -114,7 +117,7 @@ class ConnectionRegistry:
         # (API key auth requires both username and key as password)
         config = OdooConfig(
             url=user_conn.odoo_url,
-            database=user_conn.odoo_db or "",
+            database=user_conn.odoo_db or None,
             api_key=user_conn.odoo_api_key,
             username=user_conn.email if api_version == "xmlrpc" else None,
             api_version=api_version,
@@ -132,13 +135,23 @@ class ConnectionRegistry:
             error_str = str(e)
             setup_url = os.getenv("ADMIN_BASE_URL", "").rstrip("/")
 
+            # Track connection failure
+            error_type = "auth_failed"
+            if "Database name is required" in error_str:
+                error_type = "missing_database"
+            elif "Cannot reach" in error_str:
+                error_type = "unreachable"
+            track_event("connection_error", distinct_id=zitadel_sub, properties={
+                "type": error_type, "api_version": api_version, "hosting": "odoo.sh" if ".odoo.com" in user_conn.odoo_url.lower() else "self-hosted",
+            })
+
             # Build helpful troubleshooting message
             details = [
                 f"Odoo URL: {user_conn.odoo_url}",
                 f"Odoo version: {server_version or 'unknown'}",
                 f"API mode: {api_version}",
                 f"Username: {user_conn.email}",
-                f"Database: {user_conn.odoo_db or 'auto-detect'}",
+                f"Database: {user_conn.odoo_db or 'not set'}",
             ]
 
             hints = []

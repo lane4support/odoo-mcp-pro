@@ -289,7 +289,7 @@ def register_admin_routes(app, db_manager):
         try:
             config = OdooConfig(
                 url=connection.odoo_url,
-                database=connection.odoo_db or "",
+                database=connection.odoo_db or None,
                 api_key=connection.odoo_api_key,
                 username=connection.email if api_version == "xmlrpc" else None,
                 api_version=api_version,
@@ -312,7 +312,7 @@ def register_admin_routes(app, db_manager):
                     error_msg = (
                         f"Authentication failed. Checked: URL OK ({odoo_version}), "
                         f"username '{connection.email}', "
-                        f"database '{connection.odoo_db or 'auto-detect'}'. "
+                        f"database '{connection.odoo_db or 'not set'}'. "
                         f"Please verify: (1) your API key is valid, "
                         f"(2) your Odoo login matches '{connection.email}', "
                         f"(3) the database name is correct."
@@ -330,7 +330,7 @@ def register_admin_routes(app, db_manager):
             if api_version == "xmlrpc" and "database" in err.lower():
                 error_msg = (
                     f"Database error. URL OK ({odoo_version}), but the database "
-                    f"'{connection.odoo_db or 'auto-detect'}' could not be found. "
+                    f"'{connection.odoo_db or 'not set'}' could not be found. "
                     f"Please set the correct database name in Advanced settings."
                 )
             elif "Authentication failed" in err:
@@ -338,7 +338,7 @@ def register_admin_routes(app, db_manager):
                     error_msg = (
                         f"Authentication failed. URL OK ({odoo_version}). "
                         f"Tried username '{connection.email}' with your API key "
-                        f"on database '{connection.odoo_db or 'auto-detect'}'. "
+                        f"on database '{connection.odoo_db or 'not set'}'. "
                         f"Check all three values."
                     )
                 else:

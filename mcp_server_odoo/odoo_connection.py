@@ -366,101 +366,9 @@ class OdooConnection:
             logger.error(f"Failed to check database existence: {e}")
             raise OdooConnectionError(f"Failed to check database existence: {e}") from e
 
-    def auto_select_database(self) -> str:
-        """Automatically select an appropriate database.
-
-        Selection logic:
-        1. If config.database is set, validate and use it
-        2. If only one database exists, use it
-        3. If multiple databases exist and one is named 'odoo', use it
-        4. Otherwise raise an error
-
-        Returns:
-            Selected database name
-
-        Raises:
-            OdooConnectionError: If no suitable database can be selected
-        """
-        # If database is explicitly configured, use it without validation
-        # Database listing may be restricted for security reasons
-        if self.config.database:
-            db_name = self.config.database
-            logger.info(f"Using configured database: {db_name}")
-            # Skip existence check as database listing might be restricted
-            return db_name
-
-        # List available databases
-        try:
-            databases = self.list_databases()
-        except Exception as e:
-            # Database listing restricted (common on Odoo.sh)
-            # Try to extract the real database name from the error message
-            logger.warning(f"Cannot list databases (may be restricted): {e}")
-            db_name = self._guess_database_from_error(str(e))
-            if db_name:
-                logger.info(f"Inferred database name from server: {db_name}")
-                return db_name
-            raise OdooConnectionError(
-                "Database auto-selection failed. Database listing may be restricted. "
-                "Please specify ODOO_DB in your configuration."
-            ) from e
-
-        # Handle different scenarios
-        if not databases:
-            raise OdooConnectionError("No databases found on Odoo server")
-
-        if len(databases) == 1:
-            db_name = databases[0]
-            logger.info(f"Auto-selected only available database: {db_name}")
-            return db_name
-
-        # Multiple databases - check for 'odoo'
-        if "odoo" in databases:
-            logger.info("Auto-selected 'odoo' database from multiple options")
-            return "odoo"
-
-        # Cannot auto-select
-        raise OdooConnectionError(
-            f"Cannot auto-select database. Found {len(databases)} databases: "
-            f"{', '.join(databases)}. Please specify ODOO_DB in configuration."
-        )
-
-    def _guess_database_from_error(self, error_msg: str) -> Optional[str]:
-        """Try to extract the real database name from an Odoo error message.
-
-        When Odoo.sh blocks db.list() but we try to authenticate with an empty
-        database name, the error message often contains the actual database name
-        (e.g., 'FATAL: database "mydb-production-12345" does not exist').
-        We trigger this by making a dummy call with an empty db name.
-
-        Returns:
-            Database name if found, None otherwise
-        """
-        import re
-
-        try:
-            # Make a dummy authenticate call with empty db to trigger an error
-            # that reveals the real database name
-            self.common_proxy.authenticate("", "dummy", "dummy", {})
-        except Exception as e:
-            error_text = str(e)
-            # Look for: database "xxx" does not exist
-            match = re.search(r'database "([^"]+)" does not exist', error_text)
-            if match:
-                # The error references the internal db name that Odoo tried
-                # This is the real database name on Odoo.sh
-                db_name = match.group(1)
-                # Sanity check: ignore the "p_" prefixed internal names
-                # that differ from what authenticate() expects
-                if db_name.startswith("p_"):
-                    # Convert p_xxx_production_nnn to xxx-production-nnn
-                    # Odoo.sh internal format: p_project_branch_id
-                    # External format: project-branch-id
-                    clean = db_name[2:].replace("_", "-")
-                    logger.debug(f"Converted internal db name '{db_name}' to '{clean}'")
-                    return clean
-                return db_name
-        return None
+    # auto_select_database and _guess_database_from_error removed in v1.2.1
+    # Database must be explicitly provided for self-hosted Odoo.
+    # Odoo.sh instances don't need a database name (determined by hostname).
 
     def validate_database_access(self, db_name: str) -> bool:
         """Validate that we can access the specified database.
@@ -694,11 +602,19 @@ class OdooConnection:
         if not self._connected:
             raise OdooConnectionError("Not connected to Odoo")
 
-        # Get database name
-        if database:
-            db_name = database
-        else:
-            db_name = self.auto_select_database()
+        # Get database name - no guessing, explicit only
+        db_name = database or self.config.database or ""
+        if not db_name:
+            # For Odoo.sh (*.odoo.com), database is determined by hostname
+            url_lower = (self.config.url or "").lower()
+            if ".odoo.com" in url_lower:
+                # Single-DB instance, authenticate with empty string
+                db_name = ""
+            else:
+                raise OdooConnectionError(
+                    "Database name is required for self-hosted Odoo. "
+                    "Set it in Advanced settings on the setup page."
+                )
 
         logger.info(f"Authenticating in standard MCP mode for database '{db_name}'")
 
