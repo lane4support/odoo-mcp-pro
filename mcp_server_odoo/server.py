@@ -18,6 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .access_control import AccessController
 from .config import OdooConfig, get_config
+from .odoo_knowledge import SERVER_INSTRUCTIONS
 from .error_handling import (
     ConfigurationError,
     ErrorContext,
@@ -79,7 +80,7 @@ class OdooMCPServer:
         # Create FastMCP instance with server metadata
         self.app = FastMCP(
             name="odoo-mcp-server",
-            instructions="MCP server for accessing and managing Odoo ERP data through the Model Context Protocol",
+            instructions=SERVER_INSTRUCTIONS,
             auth=auth_settings,
             token_verifier=token_verifier,
         )
