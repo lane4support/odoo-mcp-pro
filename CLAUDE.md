@@ -2,29 +2,27 @@
 
 ## What this project is
 
-**odoo-mcp-pro** -- a B2B SaaS MCP server connecting Claude AI to Odoo ERP.
-Multi-tenant managed service: Postgres + Zitadel Cloud + Docker.
+**odoo-mcp-pro** -- an open source MCP server connecting AI to Odoo ERP.
+Supports Odoo 14-19+, stdio and streamable-http transport, OAuth 2.1.
 
-See [architecture.md](architecture.md) for technical details.
+This is the **public** package. The admin panel, billing, and deploy infrastructure
+live in the private repo: `pantalytics/odoo-mcp-pro-admin`.
 
 ## Design principles
 
 1. **Odoo + AI, samen sterker** -- don't replace Odoo, make it more accessible via AI
 2. **Use the interface that fits** -- Odoo UI for complex config, Claude for quick queries and data entry
 3. **Odoo is the boss** -- all data, permissions, and business logic live in Odoo; MCP server is a stateless proxy
-4. **No setup barriers** -- self-service, auto-detection, minimal configuration
-5. **Open and transparent** -- source-available (PolyForm Noncommercial 1.0.0), standard protocols (MCP, OAuth 2.1)
+4. **No fallbacks** -- explicit configuration or clear errors, never guess
+5. **Open core** -- public package works standalone, private package adds SaaS features
 
 ## Key architecture facts
 
-- Teams grouped by Odoo URL in `teams` table; first user = team admin
-- Invites: token-based with 7-day expiry in `invites` table
-- Each user has their own Odoo API key (encrypted at rest with Fernet)
-- ConnectionRegistry caches connections per user (30 min TTL)
-- Admin panel routes mounted directly into MCP SDK's Starlette app (not wrapped separately)
 - Connection factory: `OdooJSON2Connection` (Odoo 19+) / `OdooConnection` (Odoo 14-18, XML-RPC)
-- Blue-green deploy: `deploy.sh` alternates mcp-blue/mcp-green for zero-downtime
-- PostHog analytics: opt-in via `POSTHOG_API_KEY` env var (server-side, tool calls only)
+- ConnectionRegistry caches connections per user (30 min TTL, multi-tenant only)
+- `odoo_knowledge.py` provides Odoo domain knowledge via MCP server instructions
+- Without `DATABASE_URL`: single-tenant mode (one Odoo instance from env vars)
+- With `DATABASE_URL`: multi-tenant mode (requires odoo-mcp-pro-admin package)
 
 ## JSON/2 API key points
 
@@ -52,25 +50,24 @@ pytest tests/ -x -q         # unit tests (mocked), stop on first failure
 - Both connection classes must satisfy `OdooConnectionProtocol`
 - Shared exceptions live in `exceptions.py`
 - No new dependencies without discussion (httpx already available)
-- Admin panel: Jinja2 templates extending `brand_base.html` + Tailwind CSS (via CDN)
-- Terminology: Team = users sharing an Odoo URL; UserConnection = user's API key
-- Deploy: `ssh root@89.167.90.254 "cd /opt/odoo-mcp-pro/deploy && ./deploy.sh"`
+- No hardcoded fallbacks -- explicit config or clear errors
+- Self-hosted Odoo requires explicit database name (no auto-detection)
+- Odoo.sh determines database by hostname (no database name needed)
 
 ## Key files
 
 | File | Role |
 |------|------|
 | `server.py` | Factory pattern, OAuth wiring, FastMCP setup |
-| `registry.py` | ConnectionRegistry -- maps users to Odoo connections |
-| `admin/routes.py` | Setup, team, invite, and dashboard routes |
-| `admin/db.py` | Postgres DatabaseManager (teams, invites, usage) |
-| `usage.py` | Usage tracking, rate limiting, PostHog events |
-| `admin/auth.py` | OAuth login flow, session cookies, CSRF |
+| `tools.py` | MCP tools (search, create, update, delete, import) |
+| `resources.py` | MCP resources (URI-based) |
+| `schemas.py` | Pydantic result models |
 | `odoo_json2_connection.py` | JSON/2 client (httpx, Odoo 19+) |
 | `odoo_connection.py` | XML-RPC client (stdlib, Odoo 14-18) |
 | `connection_protocol.py` | Protocol class for connection interface |
-| `oauth.py` | ZitadelTokenVerifier -- token introspection |
+| `registry.py` | ConnectionRegistry -- maps users to Odoo connections |
+| `oauth.py` | ZitadelTokenVerifier -- token introspection with caching |
+| `odoo_knowledge.py` | Odoo domain knowledge (server instructions) |
 | `config.py` | OdooConfig dataclass |
-| `tools.py` | 6 MCP tools with smart field selection |
-| `resources.py` | 4 MCP resources (URI-based) |
+| `usage.py` | Usage tracking stub (full version in admin package) |
 | `access_control.py` | Odoo ACL checks via check_access_rights |

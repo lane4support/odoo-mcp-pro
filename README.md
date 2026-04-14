@@ -67,9 +67,35 @@ Your data stays in Odoo -- the server is a stateless proxy. API keys are encrypt
 
 ### Self-hosted
 
-Deploy on your own infrastructure with Docker Compose, Postgres, Zitadel, and Caddy. Full control, same features.
+Run on your own machine with a single command:
 
-See [SETUP.md](SETUP.md) for the deployment guide.
+```bash
+# Install
+pip install "mcp-server-odoo @ git+https://github.com/pantalytics/odoo-mcp-pro.git"
+
+# Run (stdio mode, for Claude Desktop / Claude Code)
+ODOO_URL=https://mycompany.odoo.com ODOO_API_KEY=your_key python -m mcp_server_odoo
+
+# Run (HTTP mode, for remote access)
+ODOO_URL=https://mycompany.odoo.com ODOO_API_KEY=your_key \
+  python -m mcp_server_odoo --transport streamable-http --host 0.0.0.0 --port 8000
+```
+
+Or add to your Claude Desktop `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "odoo": {
+      "command": "python",
+      "args": ["-m", "mcp_server_odoo"],
+      "env": {
+        "ODOO_URL": "https://mycompany.odoo.com",
+        "ODOO_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
 
 ## How it works
 
@@ -80,9 +106,11 @@ odoo-mcp-pro is an Odoo connector that implements [MCP (Model Context Protocol)]
 | `search_records` | Search any model with domain filters, sorting, pagination |
 | `get_record` | Fetch a specific record by ID with smart field selection |
 | `list_models` | Discover available Odoo models |
-| `create_record` | Create a new record in any model |
-| `update_record` | Update fields on an existing record |
-| `delete_record` | Delete a record |
+| `create_record` / `create_records` | Create one or multiple records |
+| `update_record` / `update_records` | Update one or multiple records |
+| `delete_record` / `delete_records` | Delete one or multiple records |
+| `import_records` | Idempotent upsert via external IDs (same as Odoo CSV import) |
+| `server_info` | Server version, connection status |
 
 **Supports Odoo 14-19+** -- uses the JSON/2 API for Odoo 19+ and XML-RPC for older versions. The right protocol is selected automatically.
 
