@@ -21,8 +21,37 @@ live in the private repo: `pantalytics/odoo-mcp-pro-admin`.
 - Connection factory: `OdooJSON2Connection` (Odoo 19+) / `OdooConnection` (Odoo 14-18, XML-RPC)
 - ConnectionRegistry caches connections per user (30 min TTL, multi-tenant only)
 - `odoo_knowledge.py` provides Odoo domain knowledge via MCP server instructions
-- Without `DATABASE_URL`: single-tenant mode (one Odoo instance from env vars)
+- Without `DATABASE_URL`: single-tenant mode (one Odoo instance from env vars, no OAuth)
 - With `DATABASE_URL`: multi-tenant mode (requires odoo-mcp-pro-admin package)
+
+## Open core boundary
+
+The public repo works standalone for single-tenant use (stdio or HTTP + API key).
+The SaaS features (multi-tenant, OAuth, admin UI, billing) live in the private
+`odoo-mcp-pro-admin` package and are overlaid onto this package at build time.
+
+**How the overlay works in production (Hetzner VPS):**
+- Dockerfile entry point is `python -m mcp_server_odoo` (public)
+- Admin repo's Dockerfile `COPY mcp_server_odoo_admin/` into
+  `site-packages/mcp_server_odoo/admin/` before starting
+- `DATABASE_URL` is set, which triggers public's `server.py` multi-tenant branch:
+  imports `mcp_server_odoo.admin.db.DatabaseManager`, mounts `admin/app.create_admin_app` at `/admin`
+- `oauth.py` (ZitadelTokenVerifier) and `registry.py` (ConnectionRegistry) are used
+  by public's `run_http` when `DATABASE_URL` is set
+
+**Implications for changes in this repo:**
+- `server.py` multi-tenant branch (lines ~430-495), `oauth.py`, `registry.py`,
+  and the registry-based paths in `tools.py` / `resources.py` are all production-critical.
+  Do not remove or refactor without coordinating with the admin repo Dockerfile and deploy.
+- `usage.py` has a stub `track_event` and `RateLimitExceeded` class. The admin package
+  replaces this file at build time with the full `UsageTracker`. Keep the module-level
+  API (`track_event`, `RateLimitExceeded`, `DEFAULT_DAILY_LIMIT`) stable.
+- Admin imports from public: `config.OdooConfig`, `odoo_connection.OdooConnection`,
+  `odoo_json2_connection.OdooJSON2Connection`, `performance.PerformanceManager`,
+  `version_detect.detect_api_version`, `usage.track_event`. Breaking any of these
+  signatures breaks admin.
+- Dev overlay: admin's `local-dev.sh` symlinks admin code into `mcp_server_odoo/admin/`.
+  These symlinks are `.gitignore`'d (or untracked) and should not be committed.
 
 ## JSON/2 API key points
 

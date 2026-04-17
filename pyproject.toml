@@ -14,7 +14,7 @@ authors = [
 maintainers = [
     { name = "Andrey Ivanov", email = "ivnv.xd@gmail.com" }
 ]
-license = { text = "PolyForm-Noncommercial-1.0.0" }
+license = { text = "Elastic-2.0" }
 keywords = ["mcp", "odoo", "erp", "model-context-protocol", "ai", "llm", "claude", "anthropic", "connector", "odoo-connector", "integration", "odoo-integration", "erp-connector"]
 classifiers = [
     "Development Status :: 3 - Alpha",

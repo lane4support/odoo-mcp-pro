@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/pantalytics/odoo-mcp-pro/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg" alt="License: PolyForm Noncommercial"/></a>
+  <a href="https://github.com/pantalytics/odoo-mcp-pro/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Elastic%202.0-blue.svg" alt="License: Elastic 2.0"/></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"/></a>
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-compatible-green.svg" alt="MCP Compatible"/></a>
   <a href="https://www.odoo.com/documentation/19.0/developer/reference/external_api.html"><img src="https://img.shields.io/badge/Odoo-14--19+-714b67.svg" alt="Odoo 14-19+"/></a>
@@ -67,7 +67,7 @@ Your data stays in Odoo -- the server is a stateless proxy. API keys are encrypt
 
 ### Self-hosted
 
-Run on your own machine with a single command:
+Run on your own machine. Single-tenant only: one Odoo instance, configured via env vars. Authentication is your Odoo API key -- no OAuth, no user management, no admin UI.
 
 ```bash
 # Install
@@ -76,10 +76,12 @@ pip install "mcp-server-odoo @ git+https://github.com/pantalytics/odoo-mcp-pro.g
 # Run (stdio mode, for Claude Desktop / Claude Code)
 ODOO_URL=https://mycompany.odoo.com ODOO_API_KEY=your_key python -m mcp_server_odoo
 
-# Run (HTTP mode, for remote access)
+# Run (HTTP mode, for remote access from one trusted network)
 ODOO_URL=https://mycompany.odoo.com ODOO_API_KEY=your_key \
   python -m mcp_server_odoo --transport streamable-http --host 0.0.0.0 --port 8000
 ```
+
+HTTP mode has no built-in authentication -- expose it behind a reverse proxy or restrict at the network level.
 
 Or add to your Claude Desktop `claude_desktop_config.json`:
 ```json
@@ -97,15 +99,18 @@ Or add to your Claude Desktop `claude_desktop_config.json`:
 }
 ```
 
+**Need multi-tenant, per-user connections, OAuth, or an admin UI?** That's SaaS territory -- use the [hosted version](https://pantalytics.com/en/apps/odoo-mcp-server) instead. These features live in a separate commercial package that overlays on top of this open-core server.
+
 ## How it works
 
-odoo-mcp-pro is an Odoo connector that implements [MCP (Model Context Protocol)](https://modelcontextprotocol.io) -- an open standard that lets AI assistants call external tools. It exposes 6 tools that your AI can call based on your questions:
+odoo-mcp-pro is an Odoo connector that implements [MCP (Model Context Protocol)](https://modelcontextprotocol.io) -- an open standard that lets AI assistants call external tools. It exposes the following tools that your AI can call based on your questions:
 
 | Tool | What it does |
 |------|-------------|
 | `search_records` | Search any model with domain filters, sorting, pagination |
 | `get_record` | Fetch a specific record by ID with smart field selection |
 | `list_models` | Discover available Odoo models |
+| `list_resource_templates` | Discover available resource URI templates |
 | `create_record` / `create_records` | Create one or multiple records |
 | `update_record` / `update_records` | Update one or multiple records |
 | `delete_record` / `delete_records` | Delete one or multiple records |
@@ -150,25 +155,29 @@ Your data stays in Odoo. The MCP server is a stateless proxy -- it doesn't store
 
 **I get "Access denied" on all models**
 This usually means your Odoo API key doesn't have the right permissions. Try:
-1. **Regenerate your API key** in Odoo (Settings > Users > API Keys) and update it in `/admin/setup`
+1. **Regenerate your API key** in Odoo (Settings > Users > API Keys) and update it wherever you configured it (hosted: `/admin/setup`; self-hosted: your `ODOO_API_KEY` env var)
 2. Make sure your Odoo user has at least read access to the models you want to query
 3. If you're on Odoo.sh, verify your subscription plan supports the JSON/2 API
 
-**I get "Authentication required" or "invalid_token"**
-This means the OAuth connection between your AI tool and the MCP server failed. Try disconnecting and reconnecting the MCP server in your AI tool's settings.
+**I get "Authentication required" or "invalid_token"** (hosted version)
+This means the OAuth connection between your AI tool and the MCP server failed. Try disconnecting and reconnecting the MCP server in your AI tool's settings. Self-hosted installs don't use OAuth -- they authenticate with your Odoo API key directly.
 
 **Do I need to set ODOO_DB?**
 Only if you self-host Odoo with multiple databases. Odoo.sh and Odoo Online don't need it -- the hostname determines the database.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) -- free for personal and noncommercial use. Commercial use requires a separate license from [Pantalytics](https://pantalytics.com).
+[Elastic License 2.0](LICENSE). In plain terms:
+
+- **You may** use, copy, modify, and distribute this software -- including for your own commercial purposes (running it inside your own company, your own Odoo instance, your own projects).
+- **You may not** offer it to third parties as a hosted or managed service that provides them with access to a substantial set of its features -- that's what [Pantalytics](https://pantalytics.com) does, and what the license protects.
+- **You may not** remove license notices or circumvent license key functionality.
+
+Source-available, not OSI-open-source. See the full text in [LICENSE](LICENSE).
 
 ## For Odoo Implementation Partners
 
-**odoo-mcp-pro** is licensed under [PolyForm Noncommercial 1.0.0](LICENSE). Using this software to provide commercial services to your clients -- including hosting, reselling, bundling, or offering it as part of your Odoo implementation services -- is a violation of the license and will be enforced. We actively monitor for unauthorized commercial use and will pursue legal action where necessary.
-
-**Want to offer AI-powered Odoo to your clients?** We run a Partner Program with a referral commission. You recommend odoo-mcp-pro to your end users, they sign up through your referral link, and you earn a recurring fee. No hosting or maintenance on your side.
+Want to offer AI-powered Odoo to your clients? Running your own hosted version of odoo-mcp-pro for clients is not permitted under the Elastic License 2.0. Instead, we run a Partner Program with a referral commission: you recommend odoo-mcp-pro to your end users, they sign up through your referral link, and you earn a recurring fee. No hosting or maintenance on your side.
 
 Interested? Contact [rutger@pantalytics.com](mailto:rutger@pantalytics.com) for details.
 
