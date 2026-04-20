@@ -488,6 +488,7 @@ class OdooMCPServer:
                         db_manager=self.db_manager,
                         registry=self.registry,
                         zitadel_issuer_url=issuer_url,
+                        usage_tracker=self.usage_tracker,
                     )
                     asgi_app.routes.insert(0, Mount("/admin", app=admin_app, name="admin"))
                 except ImportError:
