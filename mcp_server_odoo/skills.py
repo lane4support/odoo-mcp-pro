@@ -302,6 +302,7 @@ def register_skills(app: FastMCP) -> int:
 
     logger.info(
         f"Registered {len(skills)} skill resources "
-        f"({companion_count} companion files) + 2 tools (list_skills, get_skill)"
+        f"({companion_count} companion files) "
+        f"+ 3 tools (find_skill, list_skills, get_skill)"
     )
     return len(skills)
