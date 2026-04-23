@@ -7,7 +7,8 @@ and functionality through the Model Context Protocol.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from .registry import ConnectionRegistry
@@ -40,6 +41,110 @@ logger = get_logger(__name__)
 SERVER_VERSION = "1.2.1"
 GIT_COMMIT = os.environ.get("GIT_COMMIT", "unknown")
 _BUILD_ORIGIN = "pnl-mcp-7f3a"  # Pantalytics provenance tag
+
+# Dynamic Client Registration (RFC 7591) — allowed redirect_uri hosts.
+# Intentionally not env-configurable: anti-abuse guardrail against arbitrary
+# URIs being registered in Zitadel.
+_DCR_ALLOWED_HOSTS = frozenset({
+    "chatgpt.com",
+    "chat.openai.com",
+    "claude.ai",
+    "localhost",
+    "127.0.0.1",
+})
+# Hosts that resolve against the pre-configured static OIDC app
+# (MCP_OIDC_CLIENT_ID) with no Zitadel mutation. Everything else goes
+# through the dynamic DCR app.
+_DCR_STATIC_HOSTS = frozenset({
+    "claude.ai",
+    "localhost",
+    "127.0.0.1",
+})
+_DCR_MAX_URIS_PER_REQUEST = 5
+
+
+class _DCRUpdateError(Exception):
+    """Raised when mutating the DCR app in Zitadel fails."""
+
+
+async def _append_redirect_uris_to_dcr_app(
+    *,
+    zitadel_base_url: str,
+    pat: str,
+    project_id: str,
+    app_id: str,
+    new_uris: List[str],
+) -> None:
+    """Merge new_uris into the DCR app's redirectUris via Zitadel mgmt API.
+
+    Zitadel's UpdateOIDCAppConfig is a full-replace PUT, so we GET the
+    current oidcConfig, merge, and PUT the whole thing back.
+    """
+    import httpx
+
+    base = zitadel_base_url.rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {pat}",
+        "Content-Type": "application/json",
+    }
+    get_url = f"{base}/management/v1/projects/{project_id}/apps/{app_id}"
+    put_url = f"{get_url}/oidc_config"
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            r = await client.get(get_url, headers=headers)
+        except httpx.HTTPError as e:
+            raise _DCRUpdateError(f"GET app network error: {e}") from e
+        if r.status_code != 200:
+            raise _DCRUpdateError(
+                f"GET app failed: {r.status_code} {r.text[:200]}"
+            )
+        oidc = (r.json().get("app") or {}).get("oidcConfig") or {}
+        if not oidc:
+            raise _DCRUpdateError("app has no oidcConfig (wrong app_id?)")
+
+        existing = set(oidc.get("redirectUris") or [])
+        merged = existing | set(new_uris)
+        if merged == existing:
+            # All URIs already registered — nothing to do.
+            return
+
+        # PUT requires the full OIDC config. Preserve every field we got
+        # from GET; only override redirectUris.
+        put_body = {k: v for k, v in {
+            "redirectUris": sorted(merged),
+            "responseTypes": oidc.get("responseTypes"),
+            "grantTypes": oidc.get("grantTypes"),
+            "appType": oidc.get("appType"),
+            "authMethodType": oidc.get("authMethodType"),
+            "postLogoutRedirectUris": oidc.get("postLogoutRedirectUris"),
+            "devMode": oidc.get("devMode"),
+            "accessTokenType": oidc.get("accessTokenType"),
+            "accessTokenRoleAssertion": oidc.get("accessTokenRoleAssertion"),
+            "idTokenRoleAssertion": oidc.get("idTokenRoleAssertion"),
+            "idTokenUserinfoAssertion": oidc.get("idTokenUserinfoAssertion"),
+            "clockSkew": oidc.get("clockSkew"),
+            "additionalOrigins": oidc.get("additionalOrigins"),
+            "skipNativeAppSuccessPage": oidc.get("skipNativeAppSuccessPage"),
+            "backChannelLogoutUri": oidc.get("backChannelLogoutUri"),
+            "loginVersion": oidc.get("loginVersion"),
+        }.items() if v is not None}
+
+        try:
+            r = await client.put(put_url, headers=headers, json=put_body)
+        except httpx.HTTPError as e:
+            raise _DCRUpdateError(f"PUT config network error: {e}") from e
+        if r.status_code == 200:
+            return
+        # Zitadel returns 400 "No changes" (COMMAND-1m88i) when the PUT
+        # body matches current state. Happens on GET-PUT races with a
+        # concurrent /register call that already added our URI. Idempotent
+        # outcome either way — treat as success.
+        if r.status_code == 400 and "No changes" in r.text:
+            return
+        raise _DCRUpdateError(
+            f"PUT config failed: {r.status_code} {r.text[:200]}"
+        )
 
 
 class OdooMCPServer:
@@ -184,24 +289,158 @@ class OdooMCPServer:
 
         @self.app.custom_route("/register", methods=["POST"])
         async def register_client(request: Request) -> JSONResponse:
-            """RFC 7591 Dynamic Client Registration (stub).
+            """RFC 7591 Dynamic Client Registration.
 
-            Returns the pre-configured OIDC app client_id from Zitadel.
-            Nothing is stored — all clients share the same Zitadel OIDC app.
+            Two-path router based on redirect_uri host:
+
+            - Static hosts (claude.ai, localhost): returns the
+              pre-configured MCP_OIDC_CLIENT_ID unchanged. No Zitadel
+              mutation. Preserves live Claude users' refresh tokens.
+            - Dynamic hosts (chatgpt.com, chat.openai.com): appends the
+              URIs to the DCR app's allowlist in Zitadel via the
+              management API, returns MCP_OIDC_DCR_CLIENT_ID.
+
+            Host allowlist is intentionally hardcoded. Any URI outside
+            the allowlist → 400.
             """
-            body = await request.json()
-            redirect_uris = body.get("redirect_uris", [])
-            client_name = body.get("client_name", "unknown")
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse(
+                    {
+                        "error": "invalid_client_metadata",
+                        "error_description": "body must be JSON",
+                    },
+                    status_code=400,
+                )
 
+            raw_uris = body.get("redirect_uris") or []
+            if not isinstance(raw_uris, list) or not raw_uris:
+                return JSONResponse(
+                    {
+                        "error": "invalid_redirect_uri",
+                        "error_description": "redirect_uris required",
+                    },
+                    status_code=400,
+                )
+            if len(raw_uris) > _DCR_MAX_URIS_PER_REQUEST:
+                return JSONResponse(
+                    {
+                        "error": "invalid_redirect_uri",
+                        "error_description": (
+                            f"at most {_DCR_MAX_URIS_PER_REQUEST} URIs per request"
+                        ),
+                    },
+                    status_code=400,
+                )
+
+            hosts: list[str] = []
+            for uri in raw_uris:
+                if not isinstance(uri, str):
+                    return JSONResponse(
+                        {
+                            "error": "invalid_redirect_uri",
+                            "error_description": "uri must be a string",
+                        },
+                        status_code=400,
+                    )
+                try:
+                    parsed = urlparse(uri)
+                except Exception:
+                    return JSONResponse(
+                        {
+                            "error": "invalid_redirect_uri",
+                            "error_description": f"invalid uri: {uri}",
+                        },
+                        status_code=400,
+                    )
+                host = (parsed.hostname or "").lower()
+                if host not in _DCR_ALLOWED_HOSTS:
+                    logger.warning(
+                        f"DCR rejected: host={host!r} not in allowlist (uri={uri})"
+                    )
+                    return JSONResponse(
+                        {
+                            "error": "invalid_redirect_uri",
+                            "error_description": f"host {host!r} not allowed",
+                        },
+                        status_code=400,
+                    )
+                hosts.append(host)
+
+            client_name = body.get("client_name", "unknown")
+            all_static = all(h in _DCR_STATIC_HOSTS for h in hosts)
+
+            common_response_fields = {
+                "client_name": client_name,
+                "redirect_uris": raw_uris,
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": "none",
+            }
+
+            if all_static:
+                logger.info(
+                    f"DCR static-path: client={client_name!r} "
+                    f"hosts={sorted(set(hosts))}"
+                )
+                return JSONResponse(
+                    {"client_id": oidc_client_id, **common_response_fields}
+                )
+
+            # Dynamic-path — mutate DCR app in Zitadel
+            dcr_client_id = os.getenv("MCP_OIDC_DCR_CLIENT_ID", "").strip()
+            dcr_app_id = os.getenv("MCP_OIDC_DCR_APP_ID", "").strip()
+            dcr_project_id = os.getenv("MCP_OIDC_DCR_PROJECT_ID", "").strip()
+            zitadel_pat = os.getenv("ZITADEL_PAT", "").strip()
+
+            missing = [
+                name for name, value in [
+                    ("MCP_OIDC_DCR_CLIENT_ID", dcr_client_id),
+                    ("MCP_OIDC_DCR_APP_ID", dcr_app_id),
+                    ("MCP_OIDC_DCR_PROJECT_ID", dcr_project_id),
+                    ("ZITADEL_PAT", zitadel_pat),
+                ] if not value
+            ]
+            if missing:
+                logger.error(
+                    f"DCR dynamic-path blocked: missing env: {missing}"
+                )
+                return JSONResponse(
+                    {
+                        "error": "server_error",
+                        "error_description": (
+                            f"DCR not configured on server "
+                            f"(missing: {', '.join(missing)})"
+                        ),
+                    },
+                    status_code=500,
+                )
+
+            try:
+                await _append_redirect_uris_to_dcr_app(
+                    zitadel_base_url=zitadel,
+                    pat=zitadel_pat,
+                    project_id=dcr_project_id,
+                    app_id=dcr_app_id,
+                    new_uris=raw_uris,
+                )
+            except _DCRUpdateError as e:
+                logger.error(f"DCR dynamic-path failed: {e}")
+                return JSONResponse(
+                    {
+                        "error": "server_error",
+                        "error_description": f"Failed to update DCR app: {e}",
+                    },
+                    status_code=500,
+                )
+
+            logger.info(
+                f"DCR dynamic-path: client={client_name!r} "
+                f"hosts={sorted(set(hosts))} uris={len(raw_uris)}"
+            )
             return JSONResponse(
-                {
-                    "client_id": oidc_client_id,
-                    "client_name": client_name,
-                    "redirect_uris": redirect_uris,
-                    "grant_types": ["authorization_code", "refresh_token"],
-                    "response_types": ["code"],
-                    "token_endpoint_auth_method": "none",
-                }
+                {"client_id": dcr_client_id, **common_response_fields}
             )
 
     @staticmethod
