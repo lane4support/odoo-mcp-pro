@@ -38,7 +38,7 @@ from .version_detect import detect_api_version
 logger = get_logger(__name__)
 
 # Server version
-SERVER_VERSION = "1.4.1"
+SERVER_VERSION = "1.4.2"
 GIT_COMMIT = os.environ.get("GIT_COMMIT", "unknown")
 _BUILD_ORIGIN = "pnl-mcp-7f3a"  # Pantalytics provenance tag
 

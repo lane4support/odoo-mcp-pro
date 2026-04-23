@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import Annotations
+from mcp.types import Annotations, ToolAnnotations
 
 from .logging_config import get_logger
 
@@ -109,10 +109,13 @@ def _make_reader(path: Path, fn_name: str):
 
 
 def register_skills(app: FastMCP) -> int:
-    """Register skills as MCP resources.
+    """Register skills as MCP resources AND tools.
 
-    - `skill://{name}` → SKILL.md (entry point, surfaced in list_resources)
-    - `skill://{name}/{relative-path}` → companion files (REFERENCE.md, etc.)
+    Resources (skill://{name}) are discoverable by MCP clients that
+    surface them in their UI (browse/@-mention). Claude.ai's web client
+    currently only surfaces resources to users, not to the model, so
+    we also expose `list_skills` and `get_skill` as tools so the model
+    can pull a skill into context on its own when a workflow needs it.
 
     Safe to call at server init — no Odoo connection required.
     Returns the number of skills registered (entry points only).
@@ -120,6 +123,12 @@ def register_skills(app: FastMCP) -> int:
     skills = discover_skills()
     if not skills:
         return 0
+
+    # Build a {name: SKILL.md path} map for the tool handlers
+    skill_by_name: Dict[str, Path] = {s["name"]: Path(s["path"]) for s in skills}
+    skill_index: List[Dict[str, str]] = [
+        {"name": s["name"], "description": s["description"]} for s in skills
+    ]
 
     companion_count = 0
     for skill in skills:
@@ -145,8 +154,62 @@ def register_skills(app: FastMCP) -> int:
             )(_make_reader(companion, f"skill_{name}_{slug}"))
             companion_count += 1
 
+    # --- Tool surface: make skills discoverable to the model itself ---
+
+    @app.tool(
+        title="List Odoo Skills",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    async def list_skills() -> List[Dict[str, str]]:
+        """List available Odoo workflow skills.
+
+        Each skill is a short guide on how to accomplish a domain task
+        in Odoo (selling, buying, inventory, importing, etc.). Use
+        `get_skill(name)` to read one before starting the workflow.
+
+        Returns:
+            A list of {name, description} entries.
+        """
+        return skill_index
+
+    @app.tool(
+        title="Get Odoo Skill",
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    async def get_skill(name: str) -> str:
+        """Read an Odoo workflow skill by name.
+
+        Returns the full SKILL.md content — load this as context before
+        executing a multi-step workflow in that domain.
+
+        Args:
+            name: Skill name as returned by `list_skills` (e.g. "selling").
+
+        Returns:
+            The markdown body of the SKILL.md file. Empty string if
+            the skill name is not known.
+        """
+        path = skill_by_name.get(name)
+        if path is None:
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"get_skill({name!r}) read failed: {e}")
+            return ""
+
     logger.info(
         f"Registered {len(skills)} skill resources "
-        f"({companion_count} companion files)"
+        f"({companion_count} companion files) + 2 tools (list_skills, get_skill)"
     )
     return len(skills)
