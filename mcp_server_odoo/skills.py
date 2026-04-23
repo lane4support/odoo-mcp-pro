@@ -26,10 +26,15 @@ def _find_skills_dir() -> Optional[Path]:
 
     Search order:
     1. <repo_root>/skills — source checkout
-    2. <package_dir>/skills — shipped inside the wheel
+    2. <package_dir>/_skill_data — shipped inside the wheel (pyproject force-include)
+    3. <package_dir>/skills — legacy fallback
     """
     pkg_dir = Path(__file__).parent
-    for candidate in (pkg_dir.parent / "skills", pkg_dir / "skills"):
+    for candidate in (
+        pkg_dir.parent / "skills",
+        pkg_dir / "_skill_data",
+        pkg_dir / "skills",
+    ):
         if candidate.is_dir():
             return candidate
     return None
