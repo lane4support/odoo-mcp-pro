@@ -1732,6 +1732,24 @@ class OdooToolHandler:
                         f"wrote to 'image_1920' instead (avatar/image variants recompute automatically)"
                     )
 
+                # product.product.image_1920 has a fall-through inverse: if the
+                # template image is empty OR the template has only one active
+                # variant, the write lands on product.template instead of the
+                # variant. Use 'image_variant_1920' to force variant-specific
+                # storage. Don't auto-redirect (user may legitimately want the
+                # template-wide write); just warn.
+                if (
+                    model == "product.product"
+                    and field_name == "image_1920"
+                    and "image_variant_1920" in fields_info
+                ):
+                    warning = (
+                        "writes to product.product.image_1920 may fall through to "
+                        "product.template (if template image is empty or only one "
+                        "active variant exists). Use field_name='image_variant_1920' "
+                        "for guaranteed variant-specific storage."
+                    )
+
                 if target_field not in fields_info:
                     raise ValidationError(
                         f"Field '{target_field}' does not exist on model '{model}'"
