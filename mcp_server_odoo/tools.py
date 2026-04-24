@@ -7,11 +7,15 @@ actions like creating, updating, or deleting records.
 
 from __future__ import annotations
 
+import base64
 import contextvars
 import json
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
@@ -26,6 +30,7 @@ from .error_sanitizer import ErrorSanitizer
 from .logging_config import get_logger, perf_logger
 from .odoo_connection import OdooConnectionError
 from .schemas import (
+    BinaryFieldResult,
     BulkCreateResult,
     BulkDeleteResult,
     BulkUpdateResult,
@@ -48,6 +53,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 MAX_BULK_SIZE = 1000  # Maximum records per bulk operation
+MAX_BINARY_SIZE_BYTES = 25 * 1024 * 1024  # set_binary_field upload cap
+_AVATAR_FIELD_RE = re.compile(r"^avatar_(128|256|512|1024|1920)$")
 
 # ContextVar to pass the current user's sub from _get_user_context to the wrapper
 _current_sub: contextvars.ContextVar[str] = contextvars.ContextVar("_current_sub", default="stdio")
@@ -870,6 +877,53 @@ class OdooToolHandler:
             self._track_usage(_current_sub.get(), "import_records")
             return ImportResult(**result)
 
+        # --- Binary Field Upload ---
+
+        @self.app.tool(
+            title="Set Binary Field (Upload Image/File to a Record Field)",
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,
+                idempotentHint=True,
+                openWorldHint=True,
+            ),
+        )
+        async def set_binary_field(
+            model: str,
+            record_id: int,
+            field_name: str,
+            source: str,
+        ) -> BinaryFieldResult:
+            """Upload bytes into a Binary or Image field on an existing record.
+
+            Use this for: avatar/logo on res.partner, product images on product.template,
+            company logo, attachment bytes on custom Binary fields, etc. The bytes are
+            fetched or decoded server-side so you never pass base64 through the tool call.
+
+            For res.partner avatars: pass field_name='image_1920'. The avatar_* fields
+            are computed from image_1920 and will auto-resize once image_1920 is written.
+            If you pass 'avatar_1920' this tool will auto-redirect to 'image_1920' and
+            return a warning.
+
+            For attaching documents (PDFs, etc.) to records, use create_record on
+            ir.attachment with {name, datas, res_model, res_id} instead.
+
+            Args:
+                model: Odoo model name (e.g. 'res.partner', 'product.template')
+                record_id: ID of the record to update
+                field_name: Binary or Image field name on that model
+                source: Either an http(s) URL the server will fetch, or a data URI
+                    like 'data:image/png;base64,iVBOR...'. Max 25 MB after decode.
+
+            Returns:
+                Written field name, size in bytes, and record URL.
+            """
+            result = await self._handle_set_binary_field_tool(
+                model, record_id, field_name, source
+            )
+            self._track_usage(_current_sub.get(), "set_binary_field")
+            return BinaryFieldResult(**result)
+
     async def _handle_search_tool(
         self,
         model: str,
@@ -1578,6 +1632,159 @@ class OdooToolHandler:
             logger.error(f"Error in import_records tool: {e}")
             sanitized_msg = ErrorSanitizer.sanitize_message(str(e))
             raise ValidationError(f"Import failed: {sanitized_msg}") from e
+
+    async def _handle_set_binary_field_tool(
+        self,
+        model: str,
+        record_id: int,
+        field_name: str,
+        source: str,
+    ) -> Dict[str, Any]:
+        """Handle set_binary_field tool request.
+
+        Fetches/decodes bytes from `source` (http(s) URL or data: URI),
+        validates the target field is Binary/Image, auto-redirects avatar_*
+        writes to image_1920, and writes the base64 string via connection.write.
+        """
+        try:
+            connection, access_controller, sub = await self._get_user_context()
+            with perf_logger.track_operation("tool_set_binary_field", model=model):
+                access_controller.validate_model_access(model, "write")
+                if not connection.is_authenticated:
+                    raise ValidationError("Not authenticated with Odoo")
+                if not field_name:
+                    raise ValidationError("field_name is required")
+                if not source:
+                    raise ValidationError("source is required (http(s) URL or data: URI)")
+
+                # --- Fetch/decode bytes ---
+                raw_bytes: bytes
+                if source.startswith("data:"):
+                    # data:[<mediatype>][;base64],<data>
+                    try:
+                        header, _, payload = source.partition(",")
+                        if ";base64" not in header:
+                            raise ValidationError(
+                                "data: URI must be base64-encoded (e.g. 'data:image/png;base64,...')"
+                            )
+                        raw_bytes = base64.b64decode(payload, validate=True)
+                    except (ValueError, TypeError) as e:
+                        raise ValidationError(f"Invalid data: URI: {e}") from e
+                else:
+                    parsed = urlparse(source)
+                    if parsed.scheme not in ("http", "https"):
+                        raise ValidationError(
+                            f"source must be an http(s) URL or data: URI, got scheme '{parsed.scheme}'"
+                        )
+                    if not parsed.netloc:
+                        raise ValidationError("source URL is missing a host")
+                    try:
+                        async with httpx.AsyncClient(
+                            timeout=30.0,
+                            follow_redirects=True,
+                            max_redirects=5,
+                        ) as client:
+                            chunks: List[bytes] = []
+                            total = 0
+                            async with client.stream("GET", source) as resp:
+                                resp.raise_for_status()
+                                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                    total += len(chunk)
+                                    if total > MAX_BINARY_SIZE_BYTES:
+                                        raise ValidationError(
+                                            f"Source exceeds max size of "
+                                            f"{MAX_BINARY_SIZE_BYTES // (1024 * 1024)} MB"
+                                        )
+                                    chunks.append(chunk)
+                            raw_bytes = b"".join(chunks)
+                    except ValidationError:
+                        raise
+                    except httpx.HTTPError as e:
+                        raise ValidationError(f"Failed to fetch source URL: {e}") from e
+
+                if len(raw_bytes) > MAX_BINARY_SIZE_BYTES:
+                    raise ValidationError(
+                        f"Decoded bytes exceed max size of "
+                        f"{MAX_BINARY_SIZE_BYTES // (1024 * 1024)} MB"
+                    )
+                if not raw_bytes:
+                    raise ValidationError("Source produced zero bytes")
+
+                # --- Validate record exists ---
+                existing = connection.read(model, [record_id], ["id"])
+                if not existing:
+                    raise NotFoundError(f"Record not found: {model} with ID {record_id}")
+
+                # --- Validate field type + auto-redirect avatar_* ---
+                fields_info = connection.fields_get(model)
+                if not isinstance(fields_info, dict):
+                    raise ValidationError(f"Could not introspect fields of {model}")
+
+                target_field = field_name
+                warning: Optional[str] = None
+
+                # Avatar fields on avatar.mixin are compute-only without inverse;
+                # writing to them is a silent no-op. Redirect to image_1920 if present.
+                if _AVATAR_FIELD_RE.match(field_name) and "image_1920" in fields_info:
+                    target_field = "image_1920"
+                    warning = (
+                        f"'{field_name}' is a computed field without an inverse; "
+                        f"wrote to 'image_1920' instead (avatar/image variants recompute automatically)"
+                    )
+
+                if target_field not in fields_info:
+                    raise ValidationError(
+                        f"Field '{target_field}' does not exist on model '{model}'"
+                    )
+
+                ftype = fields_info[target_field].get("type")
+                if ftype not in ("binary", "image"):
+                    raise ValidationError(
+                        f"Field '{target_field}' is type '{ftype}', not binary/image"
+                    )
+                if fields_info[target_field].get("readonly"):
+                    raise ValidationError(
+                        f"Field '{target_field}' on '{model}' is readonly"
+                    )
+
+                # --- Write (Odoo ORM creates/updates backing ir.attachment) ---
+                b64 = base64.b64encode(raw_bytes).decode("ascii")
+                success = connection.write(model, [record_id], {target_field: b64})
+
+                base_url = (
+                    getattr(connection, "_base_url", None)
+                    or (self.config.url if self.config else "")
+                ).rstrip("/")
+                record_url = f"{base_url}/web#id={record_id}&model={model}&view_type=form"
+
+                message = (
+                    f"Wrote {len(raw_bytes)} bytes to {model}({record_id}).{target_field}"
+                )
+                if warning:
+                    message = f"{message}. Note: {warning}"
+
+                return {
+                    "success": bool(success),
+                    "model": model,
+                    "record_id": record_id,
+                    "field": target_field,
+                    "size_bytes": len(raw_bytes),
+                    "url": record_url,
+                    "message": message,
+                }
+
+        except ValidationError:
+            raise
+        except NotFoundError as e:
+            raise ValidationError(str(e)) from e
+        except AccessControlError as e:
+            raise ValidationError(f"Access denied: {e}") from e
+        except OdooConnectionError as e:
+            raise ValidationError(f"Connection error: {e}") from e
+        except Exception as e:
+            logger.error(f"Error in set_binary_field tool: {e}")
+            sanitized_msg = ErrorSanitizer.sanitize_message(str(e))
+            raise ValidationError(f"Failed to set binary field: {sanitized_msg}") from e
 
 
 def register_tools(
