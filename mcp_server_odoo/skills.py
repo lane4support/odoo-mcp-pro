@@ -94,22 +94,20 @@ def discover_skills() -> List[Dict[str, object]]:
         name = meta.get("name") or child.name
         description = meta.get("description") or f"Odoo workflow skill: {name}"
         triggers = _parse_triggers(meta.get("triggers", ""))
-        out.append({
-            "name": name,
-            "description": description,
-            "path": str(skill_md),
-            "triggers": triggers,
-        })
+        out.append(
+            {
+                "name": name,
+                "description": description,
+                "path": str(skill_md),
+                "triggers": triggers,
+            }
+        )
     return out
 
 
 def _companion_files(skill_dir: Path) -> List[Path]:
     """Every *.md under skill_dir except SKILL.md itself, recursive."""
-    return sorted(
-        p
-        for p in skill_dir.rglob("*.md")
-        if p.name != "SKILL.md" and p.is_file()
-    )
+    return sorted(p for p in skill_dir.rglob("*.md") if p.name != "SKILL.md" and p.is_file())
 
 
 def _make_reader(path: Path, fn_name: str):
@@ -121,8 +119,10 @@ def _make_reader(path: Path, fn_name: str):
     The `fn_name` is surfaced via `__name__` so resources list with a real name
     instead of all showing as `_read`.
     """
+
     async def _read() -> str:
         return path.read_text(encoding="utf-8")
+
     _read.__name__ = fn_name
     return _read
 
@@ -133,7 +133,7 @@ def register_skills(app: FastMCP) -> int:
     Resources (skill://{name}) are discoverable by MCP clients that
     surface them in their UI (browse/@-mention). Claude.ai's web client
     currently only surfaces resources to users, not to the model, so
-    we also expose `list_skills` and `get_skill` as tools so the model
+    we also expose `find_skill` and `get_skill` as tools so the model
     can pull a skill into context on its own when a workflow needs it.
 
     Safe to call at server init — no Odoo connection required.
@@ -145,9 +145,6 @@ def register_skills(app: FastMCP) -> int:
 
     # Build lookup maps for the tool handlers
     skill_by_name: Dict[str, Path] = {str(s["name"]): Path(str(s["path"])) for s in skills}
-    skill_index: List[Dict[str, str]] = [
-        {"name": str(s["name"]), "description": str(s["description"])} for s in skills
-    ]
     # For find_skill matching: pre-compile one regex per skill matching
     # any of its triggers at a word-start boundary (so "offerte" matches
     # "offertes", but trigger "po" does NOT match inside "importeer").
@@ -208,11 +205,13 @@ def register_skills(app: FastMCP) -> int:
     async def find_skill(question: str) -> Dict[str, object]:
         """Return the Odoo skill most relevant to a question, with its content.
 
-        Prefer this single tool over `list_skills` + `get_skill` — it
-        picks the right skill by keyword match and returns its full
-        markdown guide in one call. Use when you're about to execute a
-        domain workflow (selling, buying, inventory, etc.) and want the
-        reference material first.
+        Prefer this tool — it picks the right skill by keyword match
+        and returns its full markdown guide in one call. Use when
+        you're about to execute a domain workflow (selling, buying,
+        inventory, etc.) and want the reference material first.
+
+        If `find_skill` returns nothing, fall back to `get_skill(name)`
+        with a guessed name.
 
         Args:
             question: The user's question or task description, any language.
@@ -248,28 +247,6 @@ def register_skills(app: FastMCP) -> int:
         return result
 
     @app.tool(
-        title="List Odoo Skills",
-        annotations=ToolAnnotations(
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
-    )
-    async def list_skills() -> List[Dict[str, str]]:
-        """Browse all Odoo workflow skills.
-
-        Fallback for when `find_skill` returned nothing or you want to
-        see the full catalogue. For "which skill should I use for X?"
-        prefer `find_skill(question=X)` — it picks and returns content
-        in one call.
-
-        Returns:
-            A list of {name, description} entries.
-        """
-        return skill_index
-
-    @app.tool(
         title="Get Odoo Skill",
         annotations=ToolAnnotations(
             readOnlyHint=True,
@@ -285,7 +262,7 @@ def register_skills(app: FastMCP) -> int:
         executing a multi-step workflow in that domain.
 
         Args:
-            name: Skill name as returned by `list_skills` (e.g. "selling").
+            name: Skill name as returned by `find_skill` (e.g. "selling").
 
         Returns:
             The markdown body of the SKILL.md file. Empty string if
@@ -303,6 +280,6 @@ def register_skills(app: FastMCP) -> int:
     logger.info(
         f"Registered {len(skills)} skill resources "
         f"({companion_count} companion files) "
-        f"+ 3 tools (find_skill, list_skills, get_skill)"
+        f"+ 2 tools (find_skill, get_skill)"
     )
     return len(skills)
