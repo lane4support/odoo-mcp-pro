@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Optional
 
 from .access_control import AccessController
 from .config import OdooConfig
@@ -24,6 +24,21 @@ logger = logging.getLogger(__name__)
 
 # Default connection idle TTL: 30 minutes
 DEFAULT_TTL = 1800
+
+
+def _hosting_label(url: str, server_version: Optional[str]) -> str:
+    """Best-effort hosting label from the signals available at connect time.
+
+    Odoo Online and Odoo.sh both live on *.odoo.com, so the URL alone cannot
+    separate them. Only Online is reliably identifiable: its server_version
+    carries a 'saas~' prefix. The rest of the shared domain is labelled 'sh'.
+    Labels match the detection module's Hosting values.
+    """
+    if "saas~" in (server_version or ""):
+        return "online"
+    if ".odoo.com" in url.lower():
+        return "sh"
+    return "self_hosted"
 
 
 @dataclass
@@ -168,9 +183,10 @@ class ConnectionRegistry:
                 properties={
                     "type": error_type,
                     "api_version": api_version,
-                    "hosting": "odoo.sh"
-                    if ".odoo.com" in user_conn.odoo_url.lower()
-                    else "self-hosted",
+                    "hosting": _hosting_label(
+                        user_conn.odoo_url,
+                        server_version or user_conn.odoo_version,
+                    ),
                 },
             )
 
