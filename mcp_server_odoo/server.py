@@ -51,6 +51,7 @@ _DCR_ALLOWED_HOSTS = frozenset(
         "chat.openai.com",
         "claude.ai",
         "callback.mistral.ai",
+        "global.consent.azure-apim.net",
         "localhost",
         "127.0.0.1",
     }
@@ -58,8 +59,9 @@ _DCR_ALLOWED_HOSTS = frozenset(
 # Static-redirect hosts: each maps to a pre-configured OIDC app via
 # environment variable. No Zitadel mutation happens for these — the
 # redirect URIs are baked into the Zitadel app at setup time.
-# Hosts NOT in this set go through the dynamic DCR app (chatgpt.com, etc.)
-# whose redirectUris are appended at /register time.
+# Hosts NOT in this set go through a per-AI dynamic DCR app (see
+# _DCR_DYNAMIC_ENV_PREFIXES) whose redirectUris are appended at
+# /register time.
 _DCR_STATIC_HOSTS = frozenset(
     {
         "claude.ai",
@@ -68,6 +70,16 @@ _DCR_STATIC_HOSTS = frozenset(
         "127.0.0.1",
     }
 )
+# Dynamic host → env-var prefix of its Zitadel DCR app. One app per AI
+# client for clean per-AI audit/revocation. global.consent.azure-apim.net
+# is Microsoft's Power Platform consent gateway: Copilot Studio registers
+# a per-connector redirect path there, so static pre-registration is
+# impossible.
+_DCR_DYNAMIC_ENV_PREFIXES = {
+    "chatgpt.com": "MCP_CHATGPT",
+    "chat.openai.com": "MCP_CHATGPT",
+    "global.consent.azure-apim.net": "MCP_COPILOT",
+}
 _DCR_MAX_URIS_PER_REQUEST = 5
 
 
@@ -128,20 +140,26 @@ def _resolve_static_client_secret(host: str) -> str:
     return ""
 
 
-def _resolve_dcr_env() -> dict:
-    """Return the DCR (dynamic-host) Zitadel env config.
+def _resolve_dcr_env(prefix: str) -> dict:
+    """Return the Zitadel env config for a dynamic-host DCR app.
 
-    Accepts both `MCP_CHATGPT_*` (new) and `MCP_OIDC_DCR_*` (old) names,
-    new wins. Empty values mean the dynamic-path is not configured.
+    `prefix` is an env-var prefix from `_DCR_DYNAMIC_ENV_PREFIXES`
+    (e.g. "MCP_CHATGPT" → `MCP_CHATGPT_CLIENT_ID` etc.). For the ChatGPT
+    app the old `MCP_OIDC_DCR_*` names are accepted as fallback during
+    the rename rollout; other AIs have no legacy names. Empty values
+    mean the dynamic path is not configured for this AI.
     """
 
-    def _pick(new: str, old: str) -> str:
-        return os.getenv(new, "").strip() or os.getenv(old, "").strip()
+    def _pick(name: str, old: str) -> str:
+        value = os.getenv(f"{prefix}_{name}", "").strip()
+        if not value and prefix == "MCP_CHATGPT":
+            value = os.getenv(old, "").strip()
+        return value
 
     return {
-        "client_id": _pick("MCP_CHATGPT_CLIENT_ID", "MCP_OIDC_DCR_CLIENT_ID"),
-        "app_id": _pick("MCP_CHATGPT_APP_ID", "MCP_OIDC_DCR_APP_ID"),
-        "project_id": _pick("MCP_CHATGPT_PROJECT_ID", "MCP_OIDC_DCR_PROJECT_ID"),
+        "client_id": _pick("CLIENT_ID", "MCP_OIDC_DCR_CLIENT_ID"),
+        "app_id": _pick("APP_ID", "MCP_OIDC_DCR_APP_ID"),
+        "project_id": _pick("PROJECT_ID", "MCP_OIDC_DCR_PROJECT_ID"),
     }
 
 
@@ -376,9 +394,11 @@ class OdooMCPServer:
 
             - claude.ai / localhost → MCP_CLAUDE_CLIENT_ID (static app)
             - callback.mistral.ai → MCP_LECHAT_CLIENT_ID (static app)
-            - chatgpt.com / chat.openai.com → MCP_CHATGPT_CLIENT_ID
-              (dynamic DCR app: redirect URIs are appended to its
-              allowlist via the Zitadel management API at registration time)
+            - chatgpt.com / chat.openai.com → MCP_CHATGPT_* (dynamic
+              DCR app: redirect URIs are appended to its allowlist via
+              the Zitadel management API at registration time)
+            - global.consent.azure-apim.net → MCP_COPILOT_* (dynamic
+              DCR app, same mechanism; Copilot Studio / Power Platform)
 
             Host allowlist is intentionally hardcoded. Any URI outside
             the allowlist → 400.
@@ -517,8 +537,35 @@ class OdooMCPServer:
                 )
                 return JSONResponse(static_response)
 
-            # Dynamic-path — mutate DCR app in Zitadel
-            dcr = _resolve_dcr_env()
+            # Dynamic-path — mutate the per-AI DCR app in Zitadel
+            dyn_prefixes = {
+                _DCR_DYNAMIC_ENV_PREFIXES[h] for h in hosts if h in _DCR_DYNAMIC_ENV_PREFIXES
+            }
+            if not dyn_prefixes:
+                # Unreachable while every allowed non-static host is in
+                # _DCR_DYNAMIC_ENV_PREFIXES; loud guard against the two
+                # tables drifting apart.
+                logger.error(f"DCR dynamic-path: no env prefix for hosts={sorted(set(hosts))}")
+                return JSONResponse(
+                    {
+                        "error": "server_error",
+                        "error_description": "no DCR app mapping for this AI client",
+                    },
+                    status_code=500,
+                )
+            if len(dyn_prefixes) > 1:
+                logger.warning(f"DCR rejected: mixed AI hosts in one request: {sorted(set(hosts))}")
+                return JSONResponse(
+                    {
+                        "error": "invalid_redirect_uri",
+                        "error_description": (
+                            "redirect_uris span multiple AI clients; register one AI at a time"
+                        ),
+                    },
+                    status_code=400,
+                )
+            dyn_prefix = dyn_prefixes.pop()
+            dcr = _resolve_dcr_env(dyn_prefix)
             dcr_client_id = dcr["client_id"]
             dcr_app_id = dcr["app_id"]
             dcr_project_id = dcr["project_id"]
@@ -527,9 +574,9 @@ class OdooMCPServer:
             missing = [
                 name
                 for name, value in [
-                    ("MCP_CHATGPT_CLIENT_ID", dcr_client_id),
-                    ("MCP_CHATGPT_APP_ID", dcr_app_id),
-                    ("MCP_CHATGPT_PROJECT_ID", dcr_project_id),
+                    (f"{dyn_prefix}_CLIENT_ID", dcr_client_id),
+                    (f"{dyn_prefix}_APP_ID", dcr_app_id),
+                    (f"{dyn_prefix}_PROJECT_ID", dcr_project_id),
                     ("ZITADEL_PAT", zitadel_pat),
                 ]
                 if not value
@@ -564,17 +611,31 @@ class OdooMCPServer:
                     status_code=500,
                 )
 
-            logger.info(
-                f"DCR dynamic-path: client={client_name!r} "
-                f"hosts={sorted(set(hosts))} uris={len(raw_uris)}"
-            )
-            return JSONResponse(
-                {
+            # Same contract as the Le Chat static path: when a secret is
+            # configured for this AI, it is a confidential client and the
+            # secret is echoed so the client can authenticate at /token.
+            # Without a secret the client is public and uses PKCE only.
+            dyn_secret = os.getenv(f"{dyn_prefix}_CLIENT_SECRET", "").strip()
+            if dyn_secret:
+                dynamic_response = {
+                    "client_id": dcr_client_id,
+                    "client_secret": dyn_secret,
+                    "token_endpoint_auth_method": "client_secret_basic",
+                    **common_response_fields,
+                }
+            else:
+                dynamic_response = {
                     "client_id": dcr_client_id,
                     "token_endpoint_auth_method": "none",
                     **common_response_fields,
                 }
+            logger.info(
+                f"DCR dynamic-path: client={client_name!r} "
+                f"hosts={sorted(set(hosts))} uris={len(raw_uris)} "
+                f"app={dyn_prefix} "
+                f"auth={dynamic_response['token_endpoint_auth_method']}"
             )
+            return JSONResponse(dynamic_response)
 
     @staticmethod
     def _build_oauth_settings():

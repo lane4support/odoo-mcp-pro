@@ -13,6 +13,7 @@ import pytest
 
 from mcp_server_odoo.server import (
     _DCR_ALLOWED_HOSTS,
+    _DCR_DYNAMIC_ENV_PREFIXES,
     _DCR_STATIC_HOSTS,
     _append_redirect_uris_to_dcr_app,
     _DCRUpdateError,
@@ -87,6 +88,23 @@ class TestDCRAllowlist:
         # time — no DCR mutation needed.
         assert "callback.mistral.ai" in _DCR_STATIC_HOSTS
 
+    def test_copilot_is_allowed(self):
+        assert "global.consent.azure-apim.net" in _DCR_ALLOWED_HOSTS
+
+    def test_copilot_is_dynamic_not_static(self):
+        # Power Platform issues a per-connector redirect path, so the
+        # Copilot app's URIs must be appended at /register time.
+        assert "global.consent.azure-apim.net" not in _DCR_STATIC_HOSTS
+        assert _DCR_DYNAMIC_ENV_PREFIXES["global.consent.azure-apim.net"] == "MCP_COPILOT"
+
+    def test_dynamic_hosts_subset_of_allowed(self):
+        assert set(_DCR_DYNAMIC_ENV_PREFIXES).issubset(_DCR_ALLOWED_HOSTS)
+
+    def test_every_allowed_host_routes_somewhere(self):
+        # The /register dynamic path 500s on a host that is allowed but
+        # neither static nor mapped to a dynamic app; pin full coverage.
+        assert _DCR_ALLOWED_HOSTS == _DCR_STATIC_HOSTS | set(_DCR_DYNAMIC_ENV_PREFIXES)
+
 
 class TestResolveStaticClientId:
     """Per-AI host → client_id mapping with new+old env name fallback."""
@@ -147,7 +165,7 @@ class TestResolveStaticClientSecret:
 
 
 class TestResolveDcrEnv:
-    """ChatGPT (dynamic-DCR) env config: new+old name fallback."""
+    """Per-AI dynamic-DCR env config; ChatGPT keeps old-name fallback."""
 
     def test_prefers_new_env_names(self, monkeypatch):
         monkeypatch.setenv("MCP_CHATGPT_CLIENT_ID", "new-cid")
@@ -156,7 +174,7 @@ class TestResolveDcrEnv:
         monkeypatch.setenv("MCP_OIDC_DCR_CLIENT_ID", "old-cid")
         monkeypatch.setenv("MCP_OIDC_DCR_APP_ID", "old-aid")
         monkeypatch.setenv("MCP_OIDC_DCR_PROJECT_ID", "old-pid")
-        env = _resolve_dcr_env()
+        env = _resolve_dcr_env("MCP_CHATGPT")
         assert env == {"client_id": "new-cid", "app_id": "new-aid", "project_id": "new-pid"}
 
     def test_falls_back_to_old_env_names(self, monkeypatch):
@@ -165,7 +183,7 @@ class TestResolveDcrEnv:
         monkeypatch.setenv("MCP_OIDC_DCR_CLIENT_ID", "old-cid")
         monkeypatch.setenv("MCP_OIDC_DCR_APP_ID", "old-aid")
         monkeypatch.setenv("MCP_OIDC_DCR_PROJECT_ID", "old-pid")
-        env = _resolve_dcr_env()
+        env = _resolve_dcr_env("MCP_CHATGPT")
         assert env == {"client_id": "old-cid", "app_id": "old-aid", "project_id": "old-pid"}
 
     def test_unset_returns_empty_strings(self, monkeypatch):
@@ -178,7 +196,26 @@ class TestResolveDcrEnv:
             "MCP_OIDC_DCR_PROJECT_ID",
         ):
             monkeypatch.delenv(var, raising=False)
-        env = _resolve_dcr_env()
+        env = _resolve_dcr_env("MCP_CHATGPT")
+        assert env == {"client_id": "", "app_id": "", "project_id": ""}
+
+    def test_copilot_reads_its_own_vars(self, monkeypatch):
+        monkeypatch.setenv("MCP_COPILOT_CLIENT_ID", "cop-cid")
+        monkeypatch.setenv("MCP_COPILOT_APP_ID", "cop-aid")
+        monkeypatch.setenv("MCP_COPILOT_PROJECT_ID", "cop-pid")
+        env = _resolve_dcr_env("MCP_COPILOT")
+        assert env == {"client_id": "cop-cid", "app_id": "cop-aid", "project_id": "cop-pid"}
+
+    def test_copilot_has_no_legacy_fallback(self, monkeypatch):
+        # The MCP_OIDC_DCR_* fallback belongs to the ChatGPT app only;
+        # Copilot silently inheriting it would point DCR mutations at
+        # the wrong Zitadel app.
+        for var in ("MCP_COPILOT_CLIENT_ID", "MCP_COPILOT_APP_ID", "MCP_COPILOT_PROJECT_ID"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("MCP_OIDC_DCR_CLIENT_ID", "old-cid")
+        monkeypatch.setenv("MCP_OIDC_DCR_APP_ID", "old-aid")
+        monkeypatch.setenv("MCP_OIDC_DCR_PROJECT_ID", "old-pid")
+        env = _resolve_dcr_env("MCP_COPILOT")
         assert env == {"client_id": "", "app_id": "", "project_id": ""}
 
 
