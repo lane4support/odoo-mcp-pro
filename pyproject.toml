@@ -30,7 +30,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "mcp>=1.27.1,<2",
+    "mcp>=1.27.2,<2",
     "httpx>=0.28.1",
     "curl_cffi>=0.7.0",
     "python-dotenv>=1.2.2",
