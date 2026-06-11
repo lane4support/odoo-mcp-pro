@@ -68,6 +68,9 @@ class TestDCRAllowlist:
     def test_lechat_is_allowed(self):
         assert "callback.mistral.ai" in _DCR_ALLOWED_HOSTS
 
+    def test_n8n_cloud_is_allowed(self):
+        assert "oauth.n8n.cloud" in _DCR_ALLOWED_HOSTS
+
     def test_localhost_allowed_for_dev(self):
         assert "localhost" in _DCR_ALLOWED_HOSTS
         assert "127.0.0.1" in _DCR_ALLOWED_HOSTS
@@ -88,6 +91,12 @@ class TestDCRAllowlist:
         # the redirect URI is pre-declared on the Zitadel app at setup
         # time — no DCR mutation needed.
         assert "callback.mistral.ai" in _DCR_STATIC_HOSTS
+
+    def test_n8n_cloud_is_static(self):
+        # n8n Cloud routes every instance through one central OAuth proxy
+        # (oauth.n8n.cloud), so the redirect URI is pre-declared on the
+        # Zitadel app at setup time — no DCR mutation needed.
+        assert "oauth.n8n.cloud" in _DCR_STATIC_HOSTS
 
     def test_copilot_is_allowed(self):
         assert "global.consent.azure-apim.net" in _DCR_ALLOWED_HOSTS
@@ -152,6 +161,16 @@ class TestResolveStaticClientId:
         monkeypatch.setenv("MCP_OIDC_CLIENT_ID", "old-claude-id")
         assert _resolve_static_client_id("callback.mistral.ai") == "lechat-id"
 
+    def test_n8n_uses_dedicated_env(self, monkeypatch):
+        monkeypatch.setenv("MCP_N8N_CLIENT_ID", "n8n-id")
+        monkeypatch.setenv("MCP_CLAUDE_CLIENT_ID", "claude-id")
+        monkeypatch.setenv("MCP_OIDC_CLIENT_ID", "old-claude-id")
+        assert _resolve_static_client_id("oauth.n8n.cloud") == "n8n-id"
+
+    def test_n8n_unset_env_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("MCP_N8N_CLIENT_ID", raising=False)
+        assert _resolve_static_client_id("oauth.n8n.cloud") == ""
+
     def test_unknown_host_returns_empty(self):
         # Defensive: even if somehow allowlisted, an unmapped static host
         # returns "" so /register fails loudly rather than silently
@@ -179,6 +198,11 @@ class TestResolveStaticClientSecret:
         monkeypatch.setenv("MCP_LECHAT_CLIENT_SECRET", "should-not-leak")
         assert _resolve_static_client_secret("claude.ai") == ""
         assert _resolve_static_client_secret("localhost") == ""
+
+    def test_n8n_is_public_client_no_secret(self, monkeypatch):
+        # n8n uses PKCE only — no secret env var, helper returns "".
+        monkeypatch.setenv("MCP_LECHAT_CLIENT_SECRET", "should-not-leak")
+        assert _resolve_static_client_secret("oauth.n8n.cloud") == ""
 
     def test_unknown_host_returns_empty(self):
         assert _resolve_static_client_secret("evil.com") == ""

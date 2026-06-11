@@ -52,6 +52,7 @@ _DCR_ALLOWED_HOSTS = frozenset(
         "claude.ai",
         "callback.mistral.ai",
         "global.consent.azure-apim.net",
+        "oauth.n8n.cloud",
         "localhost",
         "127.0.0.1",
     }
@@ -66,6 +67,7 @@ _DCR_STATIC_HOSTS = frozenset(
     {
         "claude.ai",
         "callback.mistral.ai",
+        "oauth.n8n.cloud",
         "localhost",
         "127.0.0.1",
     }
@@ -132,6 +134,10 @@ def _resolve_static_client_id(host: str) -> str:
         )
     if host == "callback.mistral.ai":
         return os.getenv("MCP_LECHAT_CLIENT_ID", "").strip()
+    if host == "oauth.n8n.cloud":
+        # n8n Cloud routes all instances through one central OAuth proxy,
+        # so a single pre-configured app covers every n8n Cloud user.
+        return os.getenv("MCP_N8N_CLIENT_ID", "").strip()
     return ""
 
 
