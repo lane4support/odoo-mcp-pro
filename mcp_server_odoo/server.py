@@ -82,6 +82,17 @@ _DCR_DYNAMIC_ENV_PREFIXES = {
 }
 _DCR_MAX_URIS_PER_REQUEST = 5
 
+# OAuth scopes this server advertises everywhere a scope list is served:
+# the protected-resource and authorization-server metadata, and the DCR
+# registration response. Single source so the three never drift. `openid`
+# is the only hard requirement (see _build_oauth_settings.required_scopes);
+# the rest enrich the token (email/profile in introspection, offline_access
+# for refresh tokens). Some clients (Microsoft Copilot Studio) read the
+# `scope` field from the DCR response to build their authorize request and
+# send no scope at all without it — Zitadel then rejects with
+# "The scope of your request is missing".
+_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"]
+
 
 def create_fastmcp_app(*, auth=None, token_verifier=None) -> FastMCP:
     """Create the FastMCP app with the canonical server settings.
@@ -345,12 +356,7 @@ class OdooMCPServer:
                 {
                     "resource": resource_server_url,
                     "authorization_servers": [server_root],
-                    "scopes_supported": [
-                        "openid",
-                        "profile",
-                        "email",
-                        "offline_access",
-                    ],
+                    "scopes_supported": _OAUTH_SCOPES,
                     "bearer_methods_supported": ["header"],
                 }
             )
@@ -366,12 +372,7 @@ class OdooMCPServer:
                     "authorization_endpoint": f"{zitadel}/oauth/v2/authorize",
                     "token_endpoint": f"{zitadel}/oauth/v2/token",
                     "registration_endpoint": f"{server_root}/register",
-                    "scopes_supported": [
-                        "openid",
-                        "profile",
-                        "email",
-                        "offline_access",
-                    ],
+                    "scopes_supported": _OAUTH_SCOPES,
                     "response_types_supported": ["code"],
                     "grant_types_supported": [
                         "authorization_code",
@@ -474,6 +475,9 @@ class OdooMCPServer:
                 "redirect_uris": raw_uris,
                 "grant_types": ["authorization_code", "refresh_token"],
                 "response_types": ["code"],
+                # Advertise the scopes so clients that build their authorize
+                # request from the DCR response (Copilot Studio) send them.
+                "scope": " ".join(_OAUTH_SCOPES),
             }
 
             if all_static:
