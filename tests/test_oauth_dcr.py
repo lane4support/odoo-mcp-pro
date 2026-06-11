@@ -15,6 +15,7 @@ from mcp_server_odoo.server import (
     _DCR_ALLOWED_HOSTS,
     _DCR_DYNAMIC_ENV_PREFIXES,
     _DCR_STATIC_HOSTS,
+    _OAUTH_SCOPES,
     _append_redirect_uris_to_dcr_app,
     _DCRUpdateError,
     _resolve_dcr_env,
@@ -104,6 +105,25 @@ class TestDCRAllowlist:
         # The /register dynamic path 500s on a host that is allowed but
         # neither static nor mapped to a dynamic app; pin full coverage.
         assert _DCR_ALLOWED_HOSTS == _DCR_STATIC_HOSTS | set(_DCR_DYNAMIC_ENV_PREFIXES)
+
+
+class TestOAuthScopes:
+    """The advertised scope list feeds PRM, ASM and the DCR response."""
+
+    def test_includes_openid(self):
+        # openid is the only scope _build_oauth_settings requires of every
+        # token; advertising less than what we require would be incoherent.
+        assert "openid" in _OAUTH_SCOPES
+
+    def test_includes_offline_access_for_refresh(self):
+        # Without offline_access Zitadel issues no refresh token, so the
+        # connection would silently die when the access token expires.
+        assert "offline_access" in _OAUTH_SCOPES
+
+    def test_is_space_joinable_for_dcr_scope_field(self):
+        # The DCR response serves " ".join(_OAUTH_SCOPES) as the `scope`
+        # string; a stray empty/space entry would corrupt it.
+        assert all(s and " " not in s for s in _OAUTH_SCOPES)
 
 
 class TestResolveStaticClientId:
