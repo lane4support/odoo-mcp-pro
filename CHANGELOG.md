@@ -20,6 +20,10 @@ management UI, admin dashboard, deploy infrastructure) live in the proprietary
 - **Connection survives server deploys**: streamable-HTTP transport now runs in stateless mode (`stateless_http=True`, `json_response=True`). Previously the server kept session state in-memory per replica, so blue/green deploys dropped `Mcp-Session-Id` mappings and Claude/ChatGPT clients reported "connection lost". Stateless requests are independent, so any replica can serve any request and rolling deploys are invisible to clients. No server-initiated notifications were in use, so no feature loss.
 - **XML-RPC username resolution**: `registry.get_connection` now reads `user_conn.odoo_login` (when set) and falls back to `user_conn.email`. Odoo authenticates against `res.users.login`, which can differ from the user's email (e.g. `login="admin"`); the previous behavior locked everyone to the sign-up email.
 - **`server_info` observability**: `_current_sub` is now set before the registry/rate-limit calls in `_get_user_context`, so when those raise and a tool catches the exception (notably `server_info`), usage tracking still attributes the event to the correct user instead of silently no-op'ing as `"stdio"`.
+
+## [2.1.2] - 2026-06-17
+
+### Fixed
 - **`server_info` reports why it is not connected**: when the Odoo connection cannot be established (for example an invalid API key or an unreachable server), `server_info` now returns the reason in a new `error` field instead of only `connected: false`. AI clients can relay it so the user knows what to fix. `error` is `null` when connected.
 
 ## [1.8.0] - 2026-06-11
