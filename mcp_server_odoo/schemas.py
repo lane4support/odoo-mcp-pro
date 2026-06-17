@@ -204,8 +204,9 @@ class ExecuteMethodResult(BaseModel):
     result_kind: str = Field(
         description=(
             "Shape of the return value: 'value' (bool/number/string/None), "
-            "'records' (list of record ids), or 'action' (Odoo returned a wizard "
-            "or window action that normally needs a follow-up in the UI)"
+            "'records' (list of record ids), 'action' (Odoo returned a wizard or "
+            "window action that still needs a follow-up decision), or 'completed' "
+            "(a known wizard was driven to completion for you)"
         ),
     )
     result: Any = Field(
@@ -215,8 +216,17 @@ class ExecuteMethodResult(BaseModel):
     action: Optional[Dict[str, Any]] = Field(
         default=None,
         description=(
-            "Present only when result_kind == 'action'. The raw Odoo action dict "
-            "(e.g. a backorder or payment wizard). Follow-up handling is not done here."
+            "The raw Odoo action dict when a method returned a wizard/window action. "
+            "Present for result_kind 'action' and, for traceability, 'completed'."
+        ),
+    )
+    followup: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Present when result_kind == 'action' for a KNOWN wizard that was not "
+            "completed (no decision supplied and the client cannot be asked). "
+            "Describes the decision fields so a caller or flow can re-call with "
+            "decision={...}."
         ),
     )
     message: str = Field(description="Human-readable summary")

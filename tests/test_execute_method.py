@@ -68,22 +68,21 @@ class TestExecuteMethod:
         assert result["result"] == [7, 8]
 
     @pytest.mark.asyncio
-    async def test_action_dict_return_is_flagged(self, handler, mock_connection):
-        """A wizard/window action is surfaced as result_kind 'action'."""
+    async def test_unknown_action_dict_is_surfaced(self, handler, mock_connection):
+        """An action for a wizard we do not auto-handle is surfaced as 'action'."""
         wizard = {
             "type": "ir.actions.act_window",
-            "res_model": "stock.backorder.confirmation",
+            "res_model": "some.custom.wizard",
             "target": "new",
         }
         mock_connection.call_method.return_value = wizard
 
-        result = await handler._handle_execute_method_tool(
-            "stock.picking", "button_validate", ids=[5]
-        )
+        result = await handler._handle_execute_method_tool("x.model", "do_something", ids=[5])
 
         assert result["result_kind"] == "action"
         assert result["action"] == wizard
-        assert "follow-up" in result["message"]
+        assert result["followup"] is None
+        assert "not auto-handled" in result["message"]
 
     @pytest.mark.asyncio
     async def test_private_method_rejected(self, handler, mock_connection):

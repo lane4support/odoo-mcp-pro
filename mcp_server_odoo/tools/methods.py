@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from ..access_control import AccessControlError
@@ -23,6 +24,7 @@ from ..logging_config import perf_logger
 from ..odoo_connection import OdooConnectionError
 from ..schemas import ExecuteMethodResult
 from ._common import _current_sub, logger
+from .wizards import WizardHandler, followup_descriptor, get_handler
 
 
 def _classify_result(value: Any) -> str:
@@ -65,6 +67,8 @@ class MethodsToolsMixin:
             method: str,
             ids: Optional[List[int]] = None,
             kwargs: Optional[Dict[str, Any]] = None,
+            decision: Optional[Dict[str, Any]] = None,
+            ctx: Context = None,
         ) -> ExecuteMethodResult:
             """Call a public method on an Odoo model or recordset.
 
@@ -72,6 +76,13 @@ class MethodsToolsMixin:
             create/read/update/delete: confirming a sales order, posting an
             invoice, marking a CRM lead lost, validating a delivery, and so on.
             It runs Odoo's own method unchanged.
+
+            Some methods return a wizard instead of completing (e.g. validating a
+            delivery that is short on stock asks whether to create a backorder).
+            For known wizards this tool finishes them with Odoo's own wizard:
+            pass the answer up front via `decision`, or let your client ask you
+            (MCP elicitation). If neither is possible, the wizard's options are
+            returned so you can re-call with `decision`.
 
             Args:
                 model: Odoo model name, e.g. 'sale.order', 'account.move'.
@@ -81,13 +92,18 @@ class MethodsToolsMixin:
                 ids: Record ids to call the method on (the recordset). Omit for
                     a model-level (`@api.model`) method.
                 kwargs: Keyword arguments for the method, if it takes any.
+                decision: Pre-answer for a follow-up wizard, e.g.
+                    {"create_backorder": true} or {"journal_id": 7}. Lets a flow
+                    or agent complete the wizard without being asked.
 
             Returns:
-                The raw return value, classified as a plain value, a list of
-                record ids, or an Odoo action dict (a wizard or window action
-                that the UI would normally open next).
+                The raw return value, classified as a plain value, record ids, an
+                Odoo action (wizard still needing a decision), or 'completed' when
+                a known wizard was driven to the end for you.
             """
-            result = await self._handle_execute_method_tool(model, method, ids, kwargs)
+            result = await self._handle_execute_method_tool(
+                model, method, ids, kwargs, decision=decision, ctx=ctx
+            )
             self._track_usage(_current_sub.get(), "execute_method")
             return ExecuteMethodResult(**result)
 
@@ -97,6 +113,8 @@ class MethodsToolsMixin:
         method: str,
         ids: Optional[List[int]] = None,
         kwargs: Optional[Dict[str, Any]] = None,
+        decision: Optional[Dict[str, Any]] = None,
+        ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """Handle execute_method tool request."""
         try:
@@ -122,15 +140,29 @@ class MethodsToolsMixin:
                 value = connection.call_method(model, method, ids=ids, **(kwargs or {}))
 
                 kind = _classify_result(value)
-                action = value if kind == "action" else None
 
                 if kind == "action":
-                    summary = (
-                        f"{model}.{method} returned an Odoo action "
-                        f"({value.get('res_model') or value.get('type')}); "
-                        "a follow-up step would be needed to complete it."
-                    )
-                elif kind == "records":
+                    handler = get_handler(value)
+                    if handler is not None:
+                        return await self._drive_wizard(
+                            connection, handler, value, decision, ctx, model, method, ids or []
+                        )
+                    return {
+                        "success": True,
+                        "model": model,
+                        "method": method,
+                        "result_kind": "action",
+                        "result": value,
+                        "action": value,
+                        "followup": None,
+                        "message": (
+                            f"{model}.{method} returned an Odoo action "
+                            f"({value.get('res_model') or value.get('type')}); "
+                            "this wizard is not auto-handled, complete it in Odoo."
+                        ),
+                    }
+
+                if kind == "records":
                     summary = f"{model}.{method} returned {len(value)} record id(s)."
                 else:
                     summary = f"{model}.{method} completed."
@@ -141,7 +173,8 @@ class MethodsToolsMixin:
                     "method": method,
                     "result_kind": kind,
                     "result": value,
-                    "action": action,
+                    "action": None,
+                    "followup": None,
                     "message": summary,
                 }
 
@@ -155,3 +188,74 @@ class MethodsToolsMixin:
             logger.error(f"Error in execute_method tool: {e}")
             sanitized_msg = ErrorSanitizer.sanitize_message(str(e))
             raise ValidationError(f"Failed to execute {model}.{method}: {sanitized_msg}") from e
+
+    async def _drive_wizard(
+        self,
+        connection,
+        handler: WizardHandler,
+        action: Dict[str, Any],
+        decision: Optional[Dict[str, Any]],
+        ctx: Optional[Context],
+        model: str,
+        method: str,
+        ids: List[int],
+    ) -> Dict[str, Any]:
+        """Three-mode follow-up for a known wizard.
+
+        1. `decision` supplied -> apply it (no human / no client needed).
+        2. else if the client can be asked -> MCP elicitation.
+        3. else -> return the wizard's decision fields so the caller can re-call.
+        """
+        data: Optional[Dict[str, Any]] = None
+
+        if decision is not None:
+            try:
+                data = handler.schema(**decision).model_dump()
+            except Exception as e:
+                raise ValidationError(f"Invalid decision for {handler.res_model}: {e}") from e
+        elif ctx is not None:
+            data = await self._try_elicit(ctx, handler)
+
+        if data is not None:
+            completion = handler.apply(connection, action, data, model, ids)
+            return {
+                "success": True,
+                "model": model,
+                "method": method,
+                "result_kind": "completed",
+                "result": completion.get("result"),
+                "action": action,
+                "followup": None,
+                "message": (
+                    f"{model}.{method} -> {completion.get('message')} "
+                    f"(via {handler.res_model}.{completion.get('completion_method')})"
+                ),
+            }
+
+        # Mode 3: defer with the decision fields.
+        return {
+            "success": True,
+            "model": model,
+            "method": method,
+            "result_kind": "action",
+            "result": action,
+            "action": action,
+            "followup": followup_descriptor(handler),
+            "message": (
+                f"{model}.{method} needs a decision: {handler.prompt} "
+                "Re-call with decision={...}."
+            ),
+        }
+
+    async def _try_elicit(self, ctx: Context, handler: WizardHandler) -> Optional[Dict[str, Any]]:
+        """Ask the client for the wizard decision. None if unavailable/declined."""
+        try:
+            result = await ctx.elicit(message=handler.prompt, schema=handler.schema)
+        except Exception as e:
+            # Client does not support elicitation, or the round-trip failed.
+            logger.info("elicitation unavailable for %s: %s", handler.res_model, e)
+            return None
+        if getattr(result, "action", None) == "accept" and getattr(result, "data", None):
+            data = result.data
+            return data.model_dump() if hasattr(data, "model_dump") else dict(data)
+        return None
