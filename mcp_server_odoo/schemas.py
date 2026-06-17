@@ -277,6 +277,10 @@ class ServerInfoResult(BaseModel):
         description="Active Odoo database name. None on JSON/2 single-tenant where the API key resolves it server-side.",
     )
     connected: bool = Field(description="Whether the server is connected to Odoo")
+    error: Optional[str] = Field(
+        default=None,
+        description="Why the connection is not established, when connected is false (e.g. an invalid API key or an unreachable server). None when connected. Relay this to the user so they can fix it.",
+    )
     runtime_id: str = Field(description="Server runtime identifier")
     companies: List[Dict[str, Any]] = Field(
         default_factory=list,

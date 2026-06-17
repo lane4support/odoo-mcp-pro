@@ -79,6 +79,7 @@ class IntrospectionToolsMixin:
             """
             from ..server import _BUILD_ORIGIN, GIT_COMMIT, SERVER_VERSION
 
+            error = None
             try:
                 connection, _ac, _sub = await self._get_user_context()
                 is_connected = (
@@ -94,11 +95,17 @@ class IntrospectionToolsMixin:
                     self.config.url if self.config else "multi-tenant"
                 )
                 database = getattr(connection, "database", None)
-            except Exception:
+            except Exception as e:
+                # Surface WHY we are not connected so the AI client can tell the
+                # user (e.g. "your API key was refused" or "server unreachable")
+                # instead of a bare "not connected". Sanitized to keep internals
+                # out of the message; the connection resolver already phrases its
+                # errors for end users.
                 is_connected = False
                 api_version = self.config.api_version if self.config else "unknown"
                 odoo_url = "not connected"
                 database = None
+                error = ErrorSanitizer.sanitize_message(str(e))
 
             # Fetch companies for context (helps with multi-company setups)
             companies = []
@@ -118,6 +125,7 @@ class IntrospectionToolsMixin:
                 odoo_url=odoo_url,
                 database=database,
                 connected=is_connected,
+                error=error,
                 runtime_id=_BUILD_ORIGIN,
                 companies=companies,
             )
