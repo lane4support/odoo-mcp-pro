@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+import anyio
 from mcp.server.fastmcp import Context
+from mcp.shared.exceptions import McpError
 from mcp.types import ToolAnnotations
 
 from ..access_control import AccessControlError
@@ -26,18 +28,25 @@ from ..schemas import ExecuteMethodResult
 from ._common import _current_sub, logger
 from .wizards import WizardHandler, followup_descriptor, get_handler
 
+_ACTION_SHAPE_KEYS = ("view_mode", "views", "target", "res_id", "domain")
+
 
 def _classify_result(value: Any) -> str:
     """Bucket a method return into value / records / action.
 
-    - dict that looks like an Odoo action (window/client action or a wizard,
-      i.e. carries a `res_model` or an `ir.actions.*` type) -> 'action'
+    - an Odoo action dict -> 'action'. The reliable signal is a string `type`
+      starting with `ir.actions.`; we also accept a `res_model` paired with an
+      action-shaped key (view_mode/views/target/...) for the rare typeless
+      action. A plain result dict that merely happens to carry a `res_model`
+      key is NOT treated as an action.
     - list of ints (record ids) -> 'records'
     - anything else (bool, number, string, None, plain dict) -> 'value'
     """
     if isinstance(value, dict):
-        is_action = value.get("type", "").startswith("ir.actions.") or "res_model" in value
-        if is_action:
+        type_val = value.get("type")
+        type_is_action = isinstance(type_val, str) and type_val.startswith("ir.actions.")
+        res_model_action = "res_model" in value and any(k in value for k in _ACTION_SHAPE_KEYS)
+        if type_is_action or res_model_action:
             return "action"
         return "value"
     if isinstance(value, list) and value and all(isinstance(v, int) for v in value):
@@ -152,7 +161,7 @@ class MethodsToolsMixin:
                         "model": model,
                         "method": method,
                         "result_kind": "action",
-                        "result": value,
+                        "result": None,
                         "action": value,
                         "followup": None,
                         "message": (
@@ -208,7 +217,9 @@ class MethodsToolsMixin:
         """
         data: Optional[Dict[str, Any]] = None
 
-        if decision is not None:
+        # An empty decision ({}) means "no decision yet", same as None: route to
+        # elicitation / defer rather than validating an empty payload.
+        if decision:
             try:
                 data = handler.schema(**decision).model_dump()
             except Exception as e:
@@ -218,12 +229,35 @@ class MethodsToolsMixin:
 
         if data is not None:
             completion = handler.apply(connection, action, data, model, ids)
+            comp_result = completion.get("result")
+            # A completion method can itself return another wizard/action (chained
+            # flow). Do not claim 'completed' in that case; surface it as an action.
+            if _classify_result(comp_result) == "action":
+                next_handler = get_handler(comp_result)
+                res_model = comp_result.get("res_model")
+                if next_handler is not None:
+                    tail = f"returned a further wizard ({res_model}); another decision is needed."
+                else:
+                    # Often just a navigation redirect to the created record
+                    # (e.g. the new account.payment). We did our step; flag it
+                    # without claiming we know it is finished.
+                    tail = f"returned a further action ({res_model}); review it in Odoo."
+                return {
+                    "success": True,
+                    "model": model,
+                    "method": method,
+                    "result_kind": "action",
+                    "result": None,
+                    "action": comp_result,
+                    "followup": followup_descriptor(next_handler) if next_handler else None,
+                    "message": f"{model}.{method} -> {completion.get('message')} but Odoo {tail}",
+                }
             return {
                 "success": True,
                 "model": model,
                 "method": method,
                 "result_kind": "completed",
-                "result": completion.get("result"),
+                "result": comp_result,
                 "action": action,
                 "followup": None,
                 "message": (
@@ -238,7 +272,7 @@ class MethodsToolsMixin:
             "model": model,
             "method": method,
             "result_kind": "action",
-            "result": action,
+            "result": None,
             "action": action,
             "followup": followup_descriptor(handler),
             "message": (
@@ -248,14 +282,27 @@ class MethodsToolsMixin:
         }
 
     async def _try_elicit(self, ctx: Context, handler: WizardHandler) -> Optional[Dict[str, Any]]:
-        """Ask the client for the wizard decision. None if unavailable/declined."""
+        """Ask the client for the wizard decision. None if unavailable/declined.
+
+        A client that cannot be asked legitimately falls back to deferring: it
+        either returns a JSON-RPC error / times out (McpError) or its transport
+        is gone (anyio stream errors). Any OTHER exception is a real bug and is
+        left to propagate rather than be silently turned into a deferral.
+        """
         try:
             result = await ctx.elicit(message=handler.prompt, schema=handler.schema)
-        except Exception as e:
-            # Client does not support elicitation, or the round-trip failed.
+        except (
+            McpError,
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+            anyio.EndOfStream,
+        ) as e:
             logger.info("elicitation unavailable for %s: %s", handler.res_model, e)
             return None
-        if getattr(result, "action", None) == "accept" and getattr(result, "data", None):
+        if (
+            getattr(result, "action", None) == "accept"
+            and getattr(result, "data", None) is not None
+        ):
             data = result.data
             return data.model_dump() if hasattr(data, "model_dump") else dict(data)
         return None

@@ -130,6 +130,31 @@ class TestOdooJSON2ORM:
         result = conn.create("res.partner", {"name": "New Partner"})
         assert result == 42
 
+    def test_create_with_context(self, connected_json2):
+        """An explicit context is included in the JSON/2 request body."""
+        conn, mock_client = connected_json2
+        mock_client.post.return_value = _ok_response([55])
+
+        conn.create(
+            "account.payment.register",
+            {"journal_id": 3},
+            context={"active_model": "account.move", "active_ids": [9]},
+        )
+
+        body = mock_client.post.call_args[1]["json"]
+        assert body["vals_list"] == [{"journal_id": 3}]
+        assert body["context"] == {"active_model": "account.move", "active_ids": [9]}
+
+    def test_create_without_context_omits_key(self, connected_json2):
+        """No context -> the key is omitted from the body (not sent as null)."""
+        conn, mock_client = connected_json2
+        mock_client.post.return_value = _ok_response([55])
+
+        conn.create("res.partner", {"name": "X"})
+
+        body = mock_client.post.call_args[1]["json"]
+        assert "context" not in body
+
     def test_write(self, connected_json2):
         conn, mock_client = connected_json2
         mock_client.post.return_value = _ok_response(True)

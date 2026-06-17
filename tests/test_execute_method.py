@@ -7,6 +7,30 @@ import pytest
 from mcp_server_odoo.access_control import AccessControlError
 from mcp_server_odoo.error_handling import ValidationError
 from mcp_server_odoo.tools import OdooToolHandler
+from mcp_server_odoo.tools.methods import _classify_result
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ({"type": "ir.actions.act_window", "res_model": "x"}, "action"),
+        ({"type": "ir.actions.client", "tag": "reload"}, "action"),
+        ({"res_model": "account.move", "view_mode": "form"}, "action"),
+        ({"res_model": "sale.order", "count": 3}, "value"),  # plain dict, not an action
+        ({"type": 5, "res_model": "x"}, "value"),  # non-str type must not crash
+        ({"state": "posted"}, "value"),
+        ([1, 2, 3], "records"),
+        ([], "value"),
+        (["a", "b"], "value"),
+        ([1, "a"], "value"),
+        (True, "value"),
+        (None, "value"),
+        ("ok", "value"),
+        (42, "value"),
+    ],
+)
+def test_classify_result(value, expected):
+    assert _classify_result(value) == expected
 
 
 class TestExecuteMethod:

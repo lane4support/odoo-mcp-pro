@@ -65,15 +65,17 @@ def _build_context(
 ) -> Dict[str, Any]:
     """Context for the wizard create.
 
-    Starts from the action's own context (button_validate puts default_pick_ids
-    here) and always pins active_model / active_ids to the records that produced
-    the wizard. The web client normally supplies active_ids from the current
-    selection; over RPC the action dict may omit them, so we set them from the
-    originating call.
+    Starts from the action's OWN context and never overwrites it. Odoo sets the
+    active_model / active_ids pairing itself: account.move.action_register_payment
+    delegates to the move LINES, so its action carries
+    active_model='account.move.line' with line ids -- overwriting active_ids with
+    the move ids (our origin_ids) would make the wizard browse the wrong records.
+    We only fill active_model / active_ids as a fallback for the rarer case where
+    the action context omits them; then origin_model + origin_ids are consistent.
     """
     ctx = dict(action.get("context") or {})
     ctx.setdefault("active_model", origin_model)
-    ctx["active_ids"] = list(origin_ids or [])
+    ctx.setdefault("active_ids", list(origin_ids or []))
     if origin_ids:
         ctx.setdefault("active_id", origin_ids[0])
     return ctx
@@ -87,10 +89,16 @@ def _apply_backorder(
     origin_ids: List[int],
 ) -> Dict[str, Any]:
     ctx = _build_context(action, origin_model, origin_ids)
-    # button_validate already puts default_pick_ids in the action context; if a
-    # caller reached here without it, derive it from the originating pickings.
+    # button_validate puts default_pick_ids in the action context; derive it from
+    # the originating pickings if it did not survive the RPC round-trip.
     if "default_pick_ids" not in ctx and origin_ids:
         ctx["default_pick_ids"] = [(4, pid) for pid in origin_ids]
+    # process()/process_cancel_backorder() act on context['button_validate_picking_ids'];
+    # without it the wizard returns True and validates NOTHING. Odoo sets this key
+    # when it opens the wizard; ensure it from the originating pickings as a guard
+    # so we cannot silently no-op.
+    if "button_validate_picking_ids" not in ctx and origin_ids:
+        ctx["button_validate_picking_ids"] = list(origin_ids)
     wiz_id = connection.create("stock.backorder.confirmation", {}, context=ctx)
     method = "process" if data.get("create_backorder") else "process_cancel_backorder"
     result = connection.call_method("stock.backorder.confirmation", method, ids=[wiz_id])
@@ -139,7 +147,7 @@ WIZARD_REGISTRY: Dict[str, WizardHandler] = {
         "stock.backorder.confirmation",
         BackorderDecision,
         _apply_backorder,
-        "Some quantities are short. Create a backorder for the rest?",
+        "This delivery is not fully done. Create a backorder for the remaining quantity?",
     ),
     "account.payment.register": WizardHandler(
         "account.payment.register",
