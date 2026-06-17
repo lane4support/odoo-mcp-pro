@@ -192,6 +192,36 @@ class PostMessageResult(BaseModel):
     message: str = Field(description="Human-readable summary")
 
 
+# --- Execute Method ---
+
+
+class ExecuteMethodResult(BaseModel):
+    """Result of calling an arbitrary public ORM method via execute_method."""
+
+    success: bool = Field(description="Whether the method call returned without error")
+    model: str = Field(description="Odoo model the method was called on")
+    method: str = Field(description="Method name that was called")
+    result_kind: str = Field(
+        description=(
+            "Shape of the return value: 'value' (bool/number/string/None), "
+            "'records' (list of record ids), or 'action' (Odoo returned a wizard "
+            "or window action that normally needs a follow-up in the UI)"
+        ),
+    )
+    result: Any = Field(
+        default=None,
+        description="Raw return value from the method, as Odoo sent it back",
+    )
+    action: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Present only when result_kind == 'action'. The raw Odoo action dict "
+            "(e.g. a backorder or payment wizard). Follow-up handling is not done here."
+        ),
+    )
+    message: str = Field(description="Human-readable summary")
+
+
 # --- Bulk Operations ---
 
 
