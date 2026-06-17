@@ -14,9 +14,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import anyio
-from mcp.server.fastmcp import Context
-from mcp.shared.exceptions import McpError
 from mcp.types import ToolAnnotations
 
 from ..access_control import AccessControlError
@@ -77,7 +74,6 @@ class MethodsToolsMixin:
             ids: Optional[List[int]] = None,
             kwargs: Optional[Dict[str, Any]] = None,
             decision: Optional[Dict[str, Any]] = None,
-            ctx: Context = None,
         ) -> ExecuteMethodResult:
             """Call a public method on an Odoo model or recordset.
 
@@ -88,10 +84,11 @@ class MethodsToolsMixin:
 
             Some methods return a wizard instead of completing (e.g. validating a
             delivery that is short on stock asks whether to create a backorder).
-            For known wizards this tool finishes them with Odoo's own wizard:
-            pass the answer up front via `decision`, or let your client ask you
-            (MCP elicitation). If neither is possible, the wizard's options are
-            returned so you can re-call with `decision`.
+            For known wizards this tool finishes them with Odoo's own wizard when
+            you pass the answer in `decision`. If you call without a decision, the
+            wizard's fields are returned (`followup`) so you can read them and
+            re-call with `decision` filled in. This two-step flow is stateless: it
+            needs no live back-and-forth with your client.
 
             Args:
                 model: Odoo model name, e.g. 'sale.order', 'account.move'.
@@ -101,9 +98,9 @@ class MethodsToolsMixin:
                 ids: Record ids to call the method on (the recordset). Omit for
                     a model-level (`@api.model`) method.
                 kwargs: Keyword arguments for the method, if it takes any.
-                decision: Pre-answer for a follow-up wizard, e.g.
-                    {"create_backorder": true} or {"journal_id": 7}. Lets a flow
-                    or agent complete the wizard without being asked.
+                decision: Answer for a follow-up wizard, e.g.
+                    {"create_backorder": true} or {"journal_id": 7}. Omit it on
+                    the first call to discover the fields via `followup`.
 
             Returns:
                 The raw return value, classified as a plain value, record ids, an
@@ -111,7 +108,7 @@ class MethodsToolsMixin:
                 a known wizard was driven to the end for you.
             """
             result = await self._handle_execute_method_tool(
-                model, method, ids, kwargs, decision=decision, ctx=ctx
+                model, method, ids, kwargs, decision=decision
             )
             self._track_usage(_current_sub.get(), "execute_method")
             return ExecuteMethodResult(**result)
@@ -123,7 +120,6 @@ class MethodsToolsMixin:
         ids: Optional[List[int]] = None,
         kwargs: Optional[Dict[str, Any]] = None,
         decision: Optional[Dict[str, Any]] = None,
-        ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """Handle execute_method tool request."""
         try:
@@ -153,8 +149,8 @@ class MethodsToolsMixin:
                 if kind == "action":
                     handler = get_handler(value)
                     if handler is not None:
-                        return await self._drive_wizard(
-                            connection, handler, value, decision, ctx, model, method, ids or []
+                        return self._drive_wizard(
+                            connection, handler, value, decision, model, method, ids or []
                         )
                     return {
                         "success": True,
@@ -198,34 +194,35 @@ class MethodsToolsMixin:
             sanitized_msg = ErrorSanitizer.sanitize_message(str(e))
             raise ValidationError(f"Failed to execute {model}.{method}: {sanitized_msg}") from e
 
-    async def _drive_wizard(
+    def _drive_wizard(
         self,
         connection,
         handler: WizardHandler,
         action: Dict[str, Any],
         decision: Optional[Dict[str, Any]],
-        ctx: Optional[Context],
         model: str,
         method: str,
         ids: List[int],
     ) -> Dict[str, Any]:
-        """Three-mode follow-up for a known wizard.
+        """Two-step follow-up for a known wizard, stateless by design.
 
-        1. `decision` supplied -> apply it (no human / no client needed).
-        2. else if the client can be asked -> MCP elicitation.
-        3. else -> return the wizard's decision fields so the caller can re-call.
+        1. `decision` supplied -> apply it with Odoo's own wizard.
+        2. else -> return the wizard's decision fields (`followup`) so the caller
+           reads them and re-calls with `decision`. No live round-trip needed.
+
+        We deliberately do NOT use MCP elicitation here: completing an elicitation
+        needs a stateful session to route the answer back, which our stateless
+        HTTP transport cannot do. See docs/adr/0001-stateless-no-elicitation.md.
         """
         data: Optional[Dict[str, Any]] = None
 
-        # An empty decision ({}) means "no decision yet", same as None: route to
-        # elicitation / defer rather than validating an empty payload.
+        # An empty decision ({}) means "no decision yet", same as None: defer
+        # rather than validating an empty payload.
         if decision:
             try:
                 data = handler.schema(**decision).model_dump()
             except Exception as e:
                 raise ValidationError(f"Invalid decision for {handler.res_model}: {e}") from e
-        elif ctx is not None:
-            data = await self._try_elicit(ctx, handler)
 
         if data is not None:
             completion = handler.apply(connection, action, data, model, ids)
@@ -280,29 +277,3 @@ class MethodsToolsMixin:
                 "Re-call with decision={...}."
             ),
         }
-
-    async def _try_elicit(self, ctx: Context, handler: WizardHandler) -> Optional[Dict[str, Any]]:
-        """Ask the client for the wizard decision. None if unavailable/declined.
-
-        A client that cannot be asked legitimately falls back to deferring: it
-        either returns a JSON-RPC error / times out (McpError) or its transport
-        is gone (anyio stream errors). Any OTHER exception is a real bug and is
-        left to propagate rather than be silently turned into a deferral.
-        """
-        try:
-            result = await ctx.elicit(message=handler.prompt, schema=handler.schema)
-        except (
-            McpError,
-            anyio.ClosedResourceError,
-            anyio.BrokenResourceError,
-            anyio.EndOfStream,
-        ) as e:
-            logger.info("elicitation unavailable for %s: %s", handler.res_model, e)
-            return None
-        if (
-            getattr(result, "action", None) == "accept"
-            and getattr(result, "data", None) is not None
-        ):
-            data = result.data
-            return data.model_dump() if hasattr(data, "model_dump") else dict(data)
-        return None

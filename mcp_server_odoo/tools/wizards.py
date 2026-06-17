@@ -5,10 +5,12 @@ wizard action instead of completing, we finish it with Odoo's OWN wizard:
 create the transient model with the right context, then call its completion
 method. None of Odoo's logic is reimplemented here.
 
-The follow-up decision can come from (1) a caller-supplied parameter,
-(2) MCP elicitation answered by a human or an agent, or (3) be deferred by
-returning the available choices. This module owns the per-wizard schema and
-apply logic; the three-mode orchestration lives in methods.py.
+Two-step and stateless: the caller either supplies the decision as a parameter
+(we complete the wizard) or omits it (we return the available fields so the
+caller re-calls with `decision`). We do NOT use MCP elicitation -- completing
+one needs a stateful session our HTTP transport cannot keep; see
+docs/adr/0001-stateless-no-elicitation.md. This module owns the per-wizard
+schema and apply logic; the orchestration lives in methods.py.
 
 NOT validated against a live Odoo. The create+complete call sequence matches
 the Odoo 19 source (stock/wizard/stock_backorder_confirmation.py,

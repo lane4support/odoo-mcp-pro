@@ -1,4 +1,8 @@
-"""Tests for the wizard follow-up layer (three modes) on execute_method.
+"""Tests for the wizard follow-up layer on execute_method.
+
+Two-step, stateless: a decision either completes the wizard or, when omitted,
+the wizard's fields are returned so the caller re-calls with `decision`. There
+is no elicitation (see docs/adr/0001-stateless-no-elicitation.md).
 
 Mock-based: they assert the create + completion call SEQUENCE matches the
 Odoo 19 wizard API. They do NOT prove real Odoo behaviour (no live instance).
@@ -6,26 +10,10 @@ Odoo 19 wizard API. They do NOT prove real Odoo behaviour (no live instance).
 
 from unittest.mock import Mock
 
-import anyio
 import pytest
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
 
 from mcp_server_odoo.error_handling import ValidationError
 from mcp_server_odoo.tools import OdooToolHandler
-from mcp_server_odoo.tools.wizards import BackorderDecision
-
-
-class FakeElicit:
-    """Stand-in for an MCP client answering (or refusing) an elicitation."""
-
-    def __init__(self, action, data=None):
-        self._action = action
-        self._data = data
-
-    async def elicit(self, message, schema):
-        return Mock(action=self._action, data=self._data)
-
 
 BACKORDER_ACTION = {
     "type": "ir.actions.act_window",
@@ -66,7 +54,7 @@ class TestWizardFollowup:
         config.url = "http://localhost:8069"
         return OdooToolHandler(mock_app, mock_connection, mock_access_controller, config)
 
-    # --- Mode 1: decision supplied up front (n8n / agent path) ---
+    # --- Decision supplied up front -> complete the wizard (agent / n8n path) ---
 
     @pytest.mark.asyncio
     async def test_backorder_decision_yes_creates_backorder(self, handler, mock_connection):
@@ -136,87 +124,10 @@ class TestWizardFollowup:
                 "stock.picking", "button_validate", ids=[5], decision={"wrong_field": 1}
             )
 
-    # --- Mode 2: elicitation (human or agent answers) ---
+    # --- No decision -> defer with the choices ---
 
     @pytest.mark.asyncio
-    async def test_backorder_elicit_accept(self, handler, mock_connection):
-        mock_connection.call_method.side_effect = [BACKORDER_ACTION, True]
-        mock_connection.create.return_value = 99
-        ctx = FakeElicit("accept", data=BackorderDecision(create_backorder=True))
-
-        result = await handler._handle_execute_method_tool(
-            "stock.picking", "button_validate", ids=[5], ctx=ctx
-        )
-
-        assert result["result_kind"] == "completed"
-        second = mock_connection.call_method.call_args_list[1]
-        assert second.args[:2] == ("stock.backorder.confirmation", "process")
-
-    @pytest.mark.asyncio
-    async def test_backorder_elicit_decline_defers(self, handler, mock_connection):
-        mock_connection.call_method.side_effect = [BACKORDER_ACTION]
-        ctx = FakeElicit("decline")
-
-        result = await handler._handle_execute_method_tool(
-            "stock.picking", "button_validate", ids=[5], ctx=ctx
-        )
-
-        assert result["result_kind"] == "action"
-        assert result["followup"]["wizard"] == "stock.backorder.confirmation"
-        # No wizard was created when the user declined.
-        mock_connection.create.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_elicit_unsupported_defers(self, handler, mock_connection):
-        """A client without elicitation capability raises McpError -> defer."""
-        mock_connection.call_method.side_effect = [BACKORDER_ACTION]
-
-        class Boom:
-            async def elicit(self, message, schema):
-                raise McpError(ErrorData(code=-32601, message="elicitation not supported"))
-
-        result = await handler._handle_execute_method_tool(
-            "stock.picking", "button_validate", ids=[5], ctx=Boom()
-        )
-
-        assert result["result_kind"] == "action"
-        assert result["followup"]["wizard"] == "stock.backorder.confirmation"
-        mock_connection.create.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_elicit_transport_closed_defers(self, handler, mock_connection):
-        """A gone transport (anyio stream error) is a 'cannot ask' -> defer."""
-        mock_connection.call_method.side_effect = [BACKORDER_ACTION]
-
-        class Boom:
-            async def elicit(self, message, schema):
-                raise anyio.ClosedResourceError()
-
-        result = await handler._handle_execute_method_tool(
-            "stock.picking", "button_validate", ids=[5], ctx=Boom()
-        )
-
-        assert result["result_kind"] == "action"
-        mock_connection.create.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_elicit_unexpected_error_propagates(self, handler, mock_connection):
-        """A non-McpError, non-transport error during elicit is a real bug."""
-        mock_connection.call_method.side_effect = [BACKORDER_ACTION]
-
-        class Boom:
-            async def elicit(self, message, schema):
-                raise RuntimeError("genuine bug")
-
-        with pytest.raises(ValidationError, match="Failed to execute"):
-            await handler._handle_execute_method_tool(
-                "stock.picking", "button_validate", ids=[5], ctx=Boom()
-            )
-
-    # --- Mode 3: no decision, no client -> defer with the choices ---
-
-    @pytest.mark.asyncio
-    async def test_no_decision_no_ctx_defers_with_fields(self, handler, mock_connection):
+    async def test_no_decision_defers_with_fields(self, handler, mock_connection):
         mock_connection.call_method.side_effect = [BACKORDER_ACTION]
 
         result = await handler._handle_execute_method_tool(
@@ -243,19 +154,18 @@ class TestWizardFollowup:
     # --- Register payment specifics ---
 
     @pytest.mark.asyncio
-    async def test_register_payment_elicit_accept_strips_none_vals(self, handler, mock_connection):
-        from mcp_server_odoo.tools.wizards import RegisterPaymentDecision
-
+    async def test_register_payment_partial_decision_strips_none_vals(
+        self, handler, mock_connection
+    ):
+        """A partial decision passes only the set fields; None fields are dropped."""
         mock_connection.call_method.side_effect = [PAYMENT_ACTION, {"payment": 1}]
         mock_connection.create.return_value = 77
-        ctx = FakeElicit("accept", data=RegisterPaymentDecision(journal_id=7))
 
         result = await handler._handle_execute_method_tool(
-            "account.move", "action_register_payment", ids=[10], ctx=ctx
+            "account.move", "action_register_payment", ids=[10], decision={"journal_id": 7}
         )
 
         assert result["result_kind"] == "completed"
-        # Only the set field reaches vals; None fields are dropped.
         _, vals_arg = mock_connection.create.call_args.args
         assert vals_arg == {"journal_id": 7}
 
