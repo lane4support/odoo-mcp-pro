@@ -207,12 +207,17 @@ class OdooConnectionOrmMixin:
         """
         return self.execute_kw(model, "search_count", [domain], {})
 
-    def create(self, model: str, values: Dict[str, Any]) -> int:
+    def create(
+        self, model: str, values: Dict[str, Any], context: Optional[Dict[str, Any]] = None
+    ) -> int:
         """Create a new record.
 
         Args:
             model: The Odoo model name
             values: Dictionary of field values for the new record
+            context: Optional Odoo context. Needed for records whose defaults
+                depend on it, e.g. transient wizards that read active_model /
+                active_ids / default_* from the context.
 
         Returns:
             ID of the created record
@@ -222,7 +227,8 @@ class OdooConnectionOrmMixin:
         """
         try:
             with self._performance_manager.monitor.track_operation(f"create_{model}"):
-                record_id = self.execute_kw(model, "create", [values], {})
+                kw = {"context": context} if context else {}
+                record_id = self.execute_kw(model, "create", [values], kw)
                 # Invalidate cache for this model
                 self._performance_manager.invalidate_record_cache(model)
                 logger.info(f"Created {model} record with ID {record_id}")

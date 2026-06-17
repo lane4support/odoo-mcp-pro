@@ -116,18 +116,23 @@ class Json2OrmMixin:
 
         return result
 
-    def create(self, model: str, values: Dict[str, Any]) -> int:
+    def create(
+        self, model: str, values: Dict[str, Any], context: Optional[Dict[str, Any]] = None
+    ) -> int:
         """Create a new record.
 
         Args:
             model: Odoo model name
             values: Field values for the new record
+            context: Optional Odoo context. Needed for records whose defaults
+                depend on it, e.g. transient wizards that read active_model /
+                active_ids / default_* from the context.
 
         Returns:
             ID of the created record
         """
         # Odoo 19 JSON/2 expects vals_list (list of dicts) for create
-        result = self._call(model, "create", vals_list=[values])
+        result = self._call(model, "create", vals_list=[values], context=context)
         # Invalidate field cache for this model (in case of computed fields)
         self._fields_cache.pop(model, None)
         # create returns a list of IDs; extract the single ID
