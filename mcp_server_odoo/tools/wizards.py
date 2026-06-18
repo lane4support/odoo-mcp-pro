@@ -7,15 +7,17 @@ method. None of Odoo's logic is reimplemented here.
 
 Two-step and stateless: the caller either supplies the decision as a parameter
 (we complete the wizard) or omits it (we return the available fields so the
-caller re-calls with `decision`). We do NOT use MCP elicitation -- completing
-one needs a stateful session our HTTP transport cannot keep; see
-docs/adr/0001-stateless-no-elicitation.md. This module owns the per-wizard
-schema and apply logic; the orchestration lives in methods.py.
+caller re-calls with `decision`). This mirrors the MCP 2026-07-28 stateless
+elicitation shape (InputRequiredResult / inputResponses); see
+docs/adr/0002-stateful-sessions-and-elicitation.md. This module owns the
+per-wizard schema and apply logic; the orchestration lives in methods.py.
 
-NOT validated against a live Odoo. The create+complete call sequence matches
-the Odoo 19 source (stock/wizard/stock_backorder_confirmation.py,
-account/wizard/account_payment_register.py) but real behaviour, especially how
-each wizard populates its defaults from context, must be confirmed live.
+Validated against live Odoo 17, 18 and 19 (the "top 5" business actions and
+their Odoo-standard undo): sales confirm/cancel, invoice post/reset-or-reverse,
+register/cancel payment, purchase confirm/cancel, delivery validate/return.
+Cross-version notes captured in the apply functions (e.g. sale.order.cancel is
+a wizard on 17/18 but a direct action on 19; account.move.reversal returns its
+context as an unevaluated string).
 """
 
 from __future__ import annotations
@@ -59,6 +61,26 @@ class RegisterPaymentDecision(BaseModel):
     )
 
 
+class CancelOrderDecision(BaseModel):
+    """Follow-up for sale.order.cancel. No fields: providing a decision (even an
+    empty {}) confirms the cancellation. On Odoo 17/18, cancelling a confirmed
+    sales order opens this confirmation wizard; on 19 action_cancel cancels
+    directly with no wizard, so this handler only ever runs on 17/18."""
+
+
+class ReverseMovesDecision(BaseModel):
+    """Follow-up for account.move.reversal (the credit-note / reversal of a
+    posted move). All optional: omit to take Odoo's defaults."""
+
+    reason: Optional[str] = Field(default=None, description="Reason shown on the credit note.")
+    date: Optional[str] = Field(
+        default=None, description="Reversal date as YYYY-MM-DD. Omit for today."
+    )
+    journal_id: Optional[int] = Field(
+        default=None, description="Journal for the credit note. Omit for the move's own journal."
+    )
+
+
 # --- Apply functions: create the wizard, call its completion method. ---
 
 
@@ -75,7 +97,13 @@ def _build_context(
     We only fill active_model / active_ids as a fallback for the rarer case where
     the action context omits them; then origin_model + origin_ids are consistent.
     """
-    ctx = dict(action.get("context") or {})
+    # Odoo sometimes returns a window action's `context` as an UNEVALUATED
+    # string expression (e.g. account.move.action_reverse) rather than a dict.
+    # We cannot evaluate that safely (it references the server-side env), so we
+    # fall back to building the active_model/active_ids pairing from the origin
+    # record, which is what the wizard's default_get needs anyway.
+    raw = action.get("context")
+    ctx = dict(raw) if isinstance(raw, dict) else {}
     ctx.setdefault("active_model", origin_model)
     ctx.setdefault("active_ids", list(origin_ids or []))
     if origin_ids:
@@ -103,7 +131,16 @@ def _apply_backorder(
         ctx["button_validate_picking_ids"] = list(origin_ids)
     wiz_id = connection.create("stock.backorder.confirmation", {}, context=ctx)
     method = "process" if data.get("create_backorder") else "process_cancel_backorder"
-    result = connection.call_method("stock.backorder.confirmation", method, ids=[wiz_id])
+    # process()/process_cancel_backorder() read button_validate_picking_ids from
+    # the CALL context (env.context), not from the wizard record, then re-run
+    # button_validate(skip_backorder=True) on those pickings. Passing ctx only to
+    # create() leaves the completion call's context empty, so process() hits its
+    # `return True` no-op and validates nothing (a silent false success). The
+    # context must travel with the completion call too. Verified against Odoo 19
+    # (stock/wizard/stock_backorder_confirmation.py: process).
+    result = connection.call_method(
+        "stock.backorder.confirmation", method, ids=[wiz_id], context=ctx
+    )
     verb = "with a backorder" if data.get("create_backorder") else "without a backorder"
     return {"completion_method": method, "result": result, "message": f"Validated {verb}."}
 
@@ -118,13 +155,65 @@ def _apply_register_payment(
     ctx = _build_context(action, origin_model, origin_ids)
     vals = {k: v for k, v in data.items() if v is not None}
     wiz_id = connection.create("account.payment.register", vals, context=ctx)
+    # Pass ctx to the completion call too: action_create_payments reads the
+    # wizard's own fields so it works without it, but a wizard completion can
+    # read env.context (as stock's backorder process() does), so keep the
+    # context consistent across create + complete.
     result = connection.call_method(
-        "account.payment.register", "action_create_payments", ids=[wiz_id]
+        "account.payment.register", "action_create_payments", ids=[wiz_id], context=ctx
     )
     return {
         "completion_method": "action_create_payments",
         "result": result,
         "message": "Payment registered.",
+    }
+
+
+def _apply_sale_cancel(
+    connection: OdooConnectionProtocol,
+    action: Dict[str, Any],
+    data: Dict[str, Any],
+    origin_model: str,
+    origin_ids: List[int],
+) -> Dict[str, Any]:
+    # On Odoo 17/18 sale.order.action_cancel returns this confirmation wizard
+    # (state stays 'sale' until it is completed). Its order_id comes from the
+    # action context (default_order_id); create with that context, then confirm.
+    ctx = _build_context(action, origin_model, origin_ids)
+    wiz_id = connection.create("sale.order.cancel", {}, context=ctx)
+    result = connection.call_method("sale.order.cancel", "action_cancel", ids=[wiz_id], context=ctx)
+    return {"completion_method": "action_cancel", "result": result, "message": "Order cancelled."}
+
+
+def _apply_reverse_moves(
+    connection: OdooConnectionProtocol,
+    action: Dict[str, Any],
+    data: Dict[str, Any],
+    origin_model: str,
+    origin_ids: List[int],
+) -> Dict[str, Any]:
+    # account.move.action_reverse opens this wizard; reverse_moves() books the
+    # credit note (the audit-safe undo of a posted/paid invoice, since Odoo
+    # forbids deleting posted accounting entries).
+    ctx = _build_context(action, origin_model, origin_ids)
+    vals = {k: v for k, v in data.items() if v is not None}
+    # action_reverse returns its context as an unevaluated string, so the
+    # wizard's defaults (move_ids, the required journal_id) do not populate from
+    # it over RPC. Make the wizard self-contained: target the origin move(s) and
+    # default the credit-note journal to the invoice's own journal.
+    vals.setdefault("move_ids", [(6, 0, list(origin_ids or []))])
+    if "journal_id" not in vals and origin_ids:
+        mv = connection.search_read("account.move", [["id", "=", origin_ids[0]]], ["journal_id"])
+        if mv and mv[0].get("journal_id"):
+            vals["journal_id"] = mv[0]["journal_id"][0]
+    wiz_id = connection.create("account.move.reversal", vals, context=ctx)
+    result = connection.call_method(
+        "account.move.reversal", "reverse_moves", ids=[wiz_id], context=ctx
+    )
+    return {
+        "completion_method": "reverse_moves",
+        "result": result,
+        "message": "Credit note created.",
     }
 
 
@@ -156,6 +245,18 @@ WIZARD_REGISTRY: Dict[str, WizardHandler] = {
         RegisterPaymentDecision,
         _apply_register_payment,
         "Register a payment for this record? Set journal, amount and date, or accept the defaults.",
+    ),
+    "sale.order.cancel": WizardHandler(
+        "sale.order.cancel",
+        CancelOrderDecision,
+        _apply_sale_cancel,
+        "Cancel this sales order? Re-call with decision={} to confirm.",
+    ),
+    "account.move.reversal": WizardHandler(
+        "account.move.reversal",
+        ReverseMovesDecision,
+        _apply_reverse_moves,
+        "Create a credit note reversing this invoice? Set a reason/date or accept the defaults.",
     ),
 }
 

@@ -140,15 +140,44 @@ class TestWizardFollowup:
         mock_connection.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_empty_decision_defers_not_errors(self, handler, mock_connection):
-        """decision={} means 'no decision yet', not an invalid payload."""
+    async def test_empty_decision_completes_with_defaults(self, handler, mock_connection):
+        """For an all-optional wizard, decision={} means 'accept all defaults'
+        and COMPLETES -- the only way to finish register-payment on defaults.
+        Mirrors SEP-2322: re-issuing with (even empty) inputResponses completes."""
+        mock_connection.call_method.side_effect = [PAYMENT_ACTION, {"payment": 1}]
+        mock_connection.create.return_value = 77
+
+        result = await handler._handle_execute_method_tool(
+            "account.move", "action_register_payment", ids=[10], decision={}
+        )
+
+        assert result["result_kind"] == "completed"
+        mock_connection.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_decision_on_required_field_wizard_errors(self, handler, mock_connection):
+        """decision={} on a wizard with a REQUIRED field (backorder needs the
+        yes/no choice) is an invalid payload: clear error, nothing created."""
+        mock_connection.call_method.side_effect = [BACKORDER_ACTION]
+
+        with pytest.raises(ValidationError, match="Invalid decision"):
+            await handler._handle_execute_method_tool(
+                "stock.picking", "button_validate", ids=[5], decision={}
+            )
+
+        mock_connection.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_omitted_decision_defers(self, handler, mock_connection):
+        """No decision at all (None) -> discover: return the fields, change nothing."""
         mock_connection.call_method.side_effect = [BACKORDER_ACTION]
 
         result = await handler._handle_execute_method_tool(
-            "stock.picking", "button_validate", ids=[5], decision={}
+            "stock.picking", "button_validate", ids=[5]
         )
 
         assert result["result_kind"] == "action"
+        assert result["followup"] is not None
         mock_connection.create.assert_not_called()
 
     # --- Register payment specifics ---
@@ -249,3 +278,98 @@ class TestWizardFollowup:
 
         assert result["result_kind"] == "action"
         assert result["action"] == chained
+
+
+SALE_CANCEL_ACTION = {
+    "type": "ir.actions.act_window",
+    "res_model": "sale.order.cancel",
+    "context": {"default_order_id": 5},
+}
+
+# action_reverse returns its context as an UNEVALUATED STRING (real Odoo
+# behaviour) -- exercises the _build_context string fallback.
+REVERSAL_ACTION = {
+    "type": "ir.actions.act_window",
+    "res_model": "account.move.reversal",
+    "context": "{'default_move_ids': [Command.set(active_ids)]}",
+}
+
+
+class TestUndoWizards:
+    """The Odoo-standard 'undo' wizards: cancel a confirmed sales order
+    (v17/18) and reverse a posted invoice with a credit note (all versions)."""
+
+    @pytest.fixture
+    def mock_app(self):
+        app = Mock()
+        app.tool = Mock(side_effect=lambda **kwargs: lambda func: func)
+        return app
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = Mock()
+        conn.is_authenticated = True
+        conn._base_url = "http://localhost:8069"
+        return conn
+
+    @pytest.fixture
+    def handler(self, mock_app, mock_connection):
+        ac = Mock()
+        ac.validate_model_access = Mock()
+        config = Mock()
+        config.url = "http://localhost:8069"
+        return OdooToolHandler(mock_app, mock_connection, ac, config)
+
+    @pytest.mark.asyncio
+    async def test_sale_cancel_wizard_completes(self, handler, mock_connection):
+        """v17/18: action_cancel returns the sale.order.cancel wizard; a decision
+        drives it to completion via the wizard's action_cancel."""
+        mock_connection.call_method.side_effect = [SALE_CANCEL_ACTION, True]
+        mock_connection.create.return_value = 50
+
+        result = await handler._handle_execute_method_tool(
+            "sale.order", "action_cancel", ids=[5], decision={}
+        )
+
+        assert result["result_kind"] == "completed"
+        assert mock_connection.create.call_args.args[0] == "sale.order.cancel"
+        # second call_method is the wizard completion
+        assert mock_connection.call_method.call_args.args[:2] == (
+            "sale.order.cancel",
+            "action_cancel",
+        )
+
+    @pytest.mark.asyncio
+    async def test_sale_cancel_deferred_lists_no_required_fields(self, handler, mock_connection):
+        """Omitting the decision returns the followup (confirm with decision={})."""
+        mock_connection.call_method.side_effect = [SALE_CANCEL_ACTION]
+        result = await handler._handle_execute_method_tool("sale.order", "action_cancel", ids=[5])
+        assert result["result_kind"] == "action"
+        assert result["followup"]["wizard"] == "sale.order.cancel"
+        mock_connection.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reverse_moves_builds_self_contained_credit_note(self, handler, mock_connection):
+        """action_reverse's context is an unevaluated string, so the handler must
+        target the origin move and default the journal itself."""
+        mock_connection.call_method.side_effect = [REVERSAL_ACTION, {"refund": 1}]
+        mock_connection.create.return_value = 60
+        mock_connection.search_read.return_value = [{"journal_id": [7, "Customer Invoices"]}]
+
+        result = await handler._handle_execute_method_tool(
+            "account.move", "action_reverse", ids=[10], decision={"reason": "wrong amount"}
+        )
+
+        assert result["result_kind"] == "completed"
+        model, vals = (
+            mock_connection.create.call_args.args[0],
+            mock_connection.create.call_args.args[1],
+        )
+        assert model == "account.move.reversal"
+        assert vals["move_ids"] == [(6, 0, [10])]  # self-contained, not from the string ctx
+        assert vals["journal_id"] == 7  # defaulted from the invoice
+        assert vals["reason"] == "wrong amount"
+        assert mock_connection.call_method.call_args.args[:2] == (
+            "account.move.reversal",
+            "reverse_moves",
+        )
