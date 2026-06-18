@@ -173,6 +173,33 @@ class TestWriteTools:
         mock_connection.unlink.assert_called_once_with(model, [record_id])
 
     @pytest.mark.asyncio
+    async def test_delete_record_unnamed_record(self, tool_handler, mock_connection):
+        """Odoo returns name=False for an unnamed record (e.g. a draft credit
+        note). deleted_name must still be a string: fall back to display_name,
+        then to an ID label, never propagate False."""
+        record_id = 263
+        mock_connection.read.return_value = [
+            {"id": record_id, "name": False, "display_name": "Conceptfactuur"}
+        ]
+        mock_connection.unlink.return_value = True
+
+        result = await tool_handler._handle_delete_record_tool("account.move", record_id)
+
+        assert result["success"] is True
+        assert result["deleted_name"] == "Conceptfactuur"
+
+    @pytest.mark.asyncio
+    async def test_delete_record_no_name_at_all(self, tool_handler, mock_connection):
+        """When both name and display_name are falsy, fall back to an ID label."""
+        record_id = 264
+        mock_connection.read.return_value = [{"id": record_id, "name": False}]
+        mock_connection.unlink.return_value = True
+
+        result = await tool_handler._handle_delete_record_tool("account.move", record_id)
+
+        assert result["deleted_name"] == f"ID {record_id}"
+
+    @pytest.mark.asyncio
     async def test_delete_record_not_found(self, tool_handler, mock_connection):
         """Test delete record that doesn't exist."""
         mock_connection.read.return_value = []
