@@ -205,8 +205,10 @@ class ExecuteMethodResult(BaseModel):
         description=(
             "Shape of the return value: 'value' (bool/number/string/None), "
             "'records' (list of record ids), 'action' (Odoo returned a wizard or "
-            "window action that still needs a follow-up decision), or 'completed' "
-            "(a known wizard was driven to completion for you)"
+            "window action that still needs a follow-up decision), 'completed' "
+            "(a known wizard was driven to completion for you), or 'unsupported' "
+            "(the method needs a follow-up wizard this server has not validated; "
+            "nothing was changed and success is False)"
         ),
     )
     result: Any = Field(

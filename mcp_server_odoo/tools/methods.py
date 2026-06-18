@@ -12,6 +12,7 @@ stay out of the way.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional
 
 from mcp.types import ToolAnnotations
@@ -26,6 +27,21 @@ from ._common import _current_sub, logger
 from .wizards import WizardHandler, followup_descriptor, get_handler
 
 _ACTION_SHAPE_KEYS = ("view_mode", "views", "target", "res_id", "domain")
+
+
+def _unsupported_cta() -> str:
+    """How to tell the caller to get an unsupported wizard supported.
+
+    Kept configurable so the open-source server stays vendor-neutral: the
+    SaaS/admin layer sets MCP_UNSUPPORTED_WIZARD_CTA to its own support route
+    (e.g. 'Contact Pantalytics support to request this action.'). Default is a
+    neutral hint for self-hosters.
+    """
+    return os.getenv(
+        "MCP_UNSUPPORTED_WIZARD_CTA",
+        "This server does not handle this wizard; you can complete the action "
+        "directly in Odoo, or ask whoever operates this MCP server to add support.",
+    ).strip()
 
 
 def _classify_result(value: Any) -> str:
@@ -99,8 +115,13 @@ class MethodsToolsMixin:
                     a model-level (`@api.model`) method.
                 kwargs: Keyword arguments for the method, if it takes any.
                 decision: Answer for a follow-up wizard, e.g.
-                    {"create_backorder": true} or {"journal_id": 7}. Omit it on
-                    the first call to discover the fields via `followup`.
+                    {"create_backorder": true} or {"journal_id": 7}. OMIT it on
+                    the first call to discover the fields via `followup`; pass it
+                    (re-calling the same method) to complete. Pass decision={} to
+                    accept all of Odoo's defaults for an all-optional wizard
+                    (e.g. register-payment: full residual, today, default
+                    journal). An omitted decision discovers; any provided
+                    decision -- even {} -- completes.
 
             Returns:
                 The raw return value, classified as a plain value, record ids, an
@@ -152,18 +173,26 @@ class MethodsToolsMixin:
                         return self._drive_wizard(
                             connection, handler, value, decision, model, method, ids or []
                         )
+                    # Known method, but it needs a follow-up wizard we have NOT
+                    # validated. We refuse rather than guess: an un-vetted
+                    # wizard completion against financial data is exactly where a
+                    # silent wrong result hides. Flag it clearly as unsupported
+                    # so the calling agent stops and surfaces the support CTA
+                    # instead of treating this as done.
+                    res_model = value.get("res_model") or value.get("type")
                     return {
-                        "success": True,
+                        "success": False,
                         "model": model,
                         "method": method,
-                        "result_kind": "action",
+                        "result_kind": "unsupported",
                         "result": None,
                         "action": value,
                         "followup": None,
                         "message": (
-                            f"{model}.{method} returned an Odoo action "
-                            f"({value.get('res_model') or value.get('type')}); "
-                            "this wizard is not auto-handled, complete it in Odoo."
+                            f"Not supported yet: {model}.{method} needs a follow-up "
+                            f"step (the Odoo '{res_model}' wizard) that this server "
+                            f"does not support, so nothing was changed. "
+                            f"{_unsupported_cta()}"
                         ),
                     }
 
@@ -206,19 +235,25 @@ class MethodsToolsMixin:
     ) -> Dict[str, Any]:
         """Two-step follow-up for a known wizard, stateless by design.
 
-        1. `decision` supplied -> apply it with Odoo's own wizard.
-        2. else -> return the wizard's decision fields (`followup`) so the caller
-           reads them and re-calls with `decision`. No live round-trip needed.
+        Mirrors the MCP 2026-07-28 stateless-elicitation shape (SEP-2322): a first
+        call with no answer returns what to fill in (our `followup`, the analogue
+        of `InputRequiredResult.inputRequests`); the caller re-issues the SAME
+        call with the answer (our `decision`, the analogue of `inputResponses`).
+        Any replica can serve either call, so this works on stateless HTTP and
+        survives blue-green deploys. When the SDK ships InputRequiredResult we
+        rename `followup`->inputRequests and `decision`->inputResponses; the flow
+        is already this.
 
-        We deliberately do NOT use MCP elicitation here: completing an elicitation
-        needs a stateful session to route the answer back, which our stateless
-        HTTP transport cannot do. See docs/adr/0001-stateless-no-elicitation.md.
+        The discover-vs-complete signal is *presence*, not truthiness:
+        - `decision is None`  -> discover (return the fields to fill).
+        - `decision is not None` (including `{}`) -> complete. `{}` means
+          "accept all defaults", which is the only way to finish an all-optional
+          wizard like register-payment. This matches the spec: re-issuing with
+          inputResponses (even empty) completes the call.
         """
         data: Optional[Dict[str, Any]] = None
 
-        # An empty decision ({}) means "no decision yet", same as None: defer
-        # rather than validating an empty payload.
-        if decision:
+        if decision is not None:
             try:
                 data = handler.schema(**decision).model_dump()
             except Exception as e:
@@ -227,27 +262,43 @@ class MethodsToolsMixin:
         if data is not None:
             completion = handler.apply(connection, action, data, model, ids)
             comp_result = completion.get("result")
-            # A completion method can itself return another wizard/action (chained
-            # flow). Do not claim 'completed' in that case; surface it as an action.
+            via = f"(via {handler.res_model}.{completion.get('completion_method')})"
+            # The completion can return ANOTHER action. Two cases:
+            #  - a further KNOWN wizard -> genuinely needs another decision.
+            #  - a plain window/navigation action (e.g. open the created
+            #    account.payment) -> the wizard DID complete; that action is just
+            #    Odoo navigating to the result. Report 'completed', not "review
+            #    in Odoo" (which wrongly read as not-done for a paid invoice).
             if _classify_result(comp_result) == "action":
                 next_handler = get_handler(comp_result)
-                res_model = comp_result.get("res_model")
                 if next_handler is not None:
-                    tail = f"returned a further wizard ({res_model}); another decision is needed."
-                else:
-                    # Often just a navigation redirect to the created record
-                    # (e.g. the new account.payment). We did our step; flag it
-                    # without claiming we know it is finished.
-                    tail = f"returned a further action ({res_model}); review it in Odoo."
+                    res_model = comp_result.get("res_model")
+                    return {
+                        "success": True,
+                        "model": model,
+                        "method": method,
+                        "result_kind": "action",
+                        "result": None,
+                        "action": comp_result,
+                        "followup": followup_descriptor(next_handler),
+                        "message": (
+                            f"{model}.{method} -> {completion.get('message')} but Odoo "
+                            f"returned a further wizard ({res_model}); another decision "
+                            f"is needed."
+                        ),
+                    }
                 return {
                     "success": True,
                     "model": model,
                     "method": method,
-                    "result_kind": "action",
-                    "result": None,
-                    "action": comp_result,
-                    "followup": followup_descriptor(next_handler) if next_handler else None,
-                    "message": f"{model}.{method} -> {completion.get('message')} but Odoo {tail}",
+                    "result_kind": "completed",
+                    "result": comp_result,
+                    "action": action,
+                    "followup": None,
+                    "message": (
+                        f"{model}.{method} -> {completion.get('message')} {via} "
+                        f"Odoo returned a navigation action to the resulting record."
+                    ),
                 }
             return {
                 "success": True,
@@ -257,13 +308,10 @@ class MethodsToolsMixin:
                 "result": comp_result,
                 "action": action,
                 "followup": None,
-                "message": (
-                    f"{model}.{method} -> {completion.get('message')} "
-                    f"(via {handler.res_model}.{completion.get('completion_method')})"
-                ),
+                "message": f"{model}.{method} -> {completion.get('message')} {via}",
             }
 
-        # Mode 3: defer with the decision fields.
+        # Discover: return the fields to fill (re-call with `decision` to complete).
         return {
             "success": True,
             "model": model,
@@ -273,7 +321,7 @@ class MethodsToolsMixin:
             "action": action,
             "followup": followup_descriptor(handler),
             "message": (
-                f"{model}.{method} needs a decision: {handler.prompt} "
-                "Re-call with decision={...}."
+                f"{model}.{method} needs input: {handler.prompt} "
+                "Re-call with decision={...} (use decision={} to accept all defaults)."
             ),
         }

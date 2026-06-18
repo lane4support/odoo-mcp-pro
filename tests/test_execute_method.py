@@ -92,8 +92,10 @@ class TestExecuteMethod:
         assert result["result"] == [7, 8]
 
     @pytest.mark.asyncio
-    async def test_unknown_action_dict_is_surfaced(self, handler, mock_connection):
-        """An action for a wizard we do not auto-handle is surfaced as 'action'."""
+    async def test_unknown_wizard_is_refused_as_unsupported(self, handler, mock_connection):
+        """A method needing a wizard we have NOT validated is refused clearly:
+        success False, result_kind 'unsupported', nothing changed, with the CTA.
+        We do not guess-complete an un-vetted wizard (financial-safety)."""
         wizard = {
             "type": "ir.actions.act_window",
             "res_model": "some.custom.wizard",
@@ -103,10 +105,24 @@ class TestExecuteMethod:
 
         result = await handler._handle_execute_method_tool("x.model", "do_something", ids=[5])
 
-        assert result["result_kind"] == "action"
+        assert result["success"] is False
+        assert result["result_kind"] == "unsupported"
         assert result["action"] == wizard
         assert result["followup"] is None
-        assert "not auto-handled" in result["message"]
+        assert "Not supported" in result["message"]
+        assert "some.custom.wizard" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_unsupported_cta_is_configurable(self, handler, mock_connection, monkeypatch):
+        """The SaaS/admin layer can set its own support route; OSS stays neutral."""
+        monkeypatch.setenv("MCP_UNSUPPORTED_WIZARD_CTA", "Contact Pantalytics support.")
+        mock_connection.call_method.return_value = {
+            "type": "ir.actions.act_window",
+            "res_model": "some.custom.wizard",
+            "target": "new",
+        }
+        result = await handler._handle_execute_method_tool("x.model", "do_something", ids=[5])
+        assert result["message"].endswith("Contact Pantalytics support.")
 
     @pytest.mark.asyncio
     async def test_private_method_rejected(self, handler, mock_connection):
