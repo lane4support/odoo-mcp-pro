@@ -93,6 +93,21 @@ class OdooConnectionOrmMixin:
             return result
 
         except xmlrpc.client.Fault as e:
+            # Odoo's XML-RPC endpoint marshals responses with allow_none=False,
+            # so a method that legitimately returns None (e.g.
+            # account.move.button_draft, account.payment.action_cancel,
+            # stock.picking.button_validate on a full transfer) raises
+            # "cannot marshal None" *after* the method already ran and committed.
+            # Treat that as the successful void return it is — otherwise the
+            # caller sees a false failure and may retry a financial action that
+            # in fact succeeded (double post / double payment). Verified against
+            # Odoo 18 + 19: the state change persists despite this fault.
+            if "cannot marshal None" in (e.faultString or ""):
+                logger.debug(
+                    f"{method} on {model} returned None; XML-RPC cannot encode "
+                    f"None, treating as a successful void return"
+                )
+                return None
             logger.error(f"XML-RPC fault during {method} on {model}: {e}")
             # Sanitize the fault string before exposing to user
             sanitized_message = ErrorSanitizer.sanitize_xmlrpc_fault(e.faultString)
@@ -207,12 +222,17 @@ class OdooConnectionOrmMixin:
         """
         return self.execute_kw(model, "search_count", [domain], {})
 
-    def create(self, model: str, values: Dict[str, Any]) -> int:
+    def create(
+        self, model: str, values: Dict[str, Any], context: Optional[Dict[str, Any]] = None
+    ) -> int:
         """Create a new record.
 
         Args:
             model: The Odoo model name
             values: Dictionary of field values for the new record
+            context: Optional Odoo context. Needed for records whose defaults
+                depend on it, e.g. transient wizards that read active_model /
+                active_ids / default_* from the context.
 
         Returns:
             ID of the created record
@@ -222,7 +242,8 @@ class OdooConnectionOrmMixin:
         """
         try:
             with self._performance_manager.monitor.track_operation(f"create_{model}"):
-                record_id = self.execute_kw(model, "create", [values], {})
+                kw = {"context": context} if context else {}
+                record_id = self.execute_kw(model, "create", [values], kw)
                 # Invalidate cache for this model
                 self._performance_manager.invalidate_record_cache(model)
                 logger.info(f"Created {model} record with ID {record_id}")

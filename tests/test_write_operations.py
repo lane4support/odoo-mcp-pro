@@ -78,6 +78,21 @@ class TestWriteOperations:
             with pytest.raises(OdooConnectionError, match="Create failed"):
                 connection.create(model, values)
 
+    def test_create_threads_context(self, connection):
+        """An explicit context is forwarded to execute_kw as the create kwargs."""
+        with patch.object(connection, "execute_kw", return_value=7) as mock_execute:
+            connection.create(
+                "account.payment.register",
+                {"journal_id": 3},
+                context={"active_model": "account.move", "active_ids": [9]},
+            )
+            mock_execute.assert_called_once_with(
+                "account.payment.register",
+                "create",
+                [{"journal_id": 3}],
+                {"context": {"active_model": "account.move", "active_ids": [9]}},
+            )
+
     def test_write_records(self, connection):
         """Test updating records."""
         model = "res.partner"

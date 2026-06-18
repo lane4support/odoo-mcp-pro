@@ -22,6 +22,7 @@ from .crud import CrudToolsMixin
 from .formatting import FormattingMixin
 from .introspection import IntrospectionToolsMixin
 from .messaging import MessagingToolsMixin
+from .methods import MethodsToolsMixin
 from .query import QueryToolsMixin
 
 
@@ -33,6 +34,7 @@ class OdooToolHandler(
     BulkToolsMixin,
     BinaryToolsMixin,
     MessagingToolsMixin,
+    MethodsToolsMixin,
 ):
     """Handles MCP tool requests for Odoo operations."""
 
@@ -87,6 +89,7 @@ class OdooToolHandler(
         self._register_bulk_tools()
         self._register_binary_tools()
         self._register_messaging_tools()
+        self._register_methods_tools()
 
 
 def register_tools(

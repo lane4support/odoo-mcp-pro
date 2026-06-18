@@ -192,6 +192,48 @@ class PostMessageResult(BaseModel):
     message: str = Field(description="Human-readable summary")
 
 
+# --- Execute Method ---
+
+
+class ExecuteMethodResult(BaseModel):
+    """Result of calling an arbitrary public ORM method via execute_method."""
+
+    success: bool = Field(description="Whether the method call returned without error")
+    model: str = Field(description="Odoo model the method was called on")
+    method: str = Field(description="Method name that was called")
+    result_kind: str = Field(
+        description=(
+            "Shape of the return value: 'value' (bool/number/string/None), "
+            "'records' (list of record ids), 'action' (Odoo returned a wizard or "
+            "window action that still needs a follow-up decision), 'completed' "
+            "(a known wizard was driven to completion for you), or 'unsupported' "
+            "(the method needs a follow-up wizard this server has not validated; "
+            "nothing was changed and success is False)"
+        ),
+    )
+    result: Any = Field(
+        default=None,
+        description="Raw return value from the method, as Odoo sent it back",
+    )
+    action: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "The raw Odoo action dict when a method returned a wizard/window action. "
+            "Present for result_kind 'action' and, for traceability, 'completed'."
+        ),
+    )
+    followup: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Present when result_kind == 'action' for a KNOWN wizard that was not "
+            "completed (no decision supplied and the client cannot be asked). "
+            "Describes the decision fields so a caller or flow can re-call with "
+            "decision={...}."
+        ),
+    )
+    message: str = Field(description="Human-readable summary")
+
+
 # --- Bulk Operations ---
 
 
