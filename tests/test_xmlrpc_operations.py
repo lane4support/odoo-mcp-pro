@@ -144,6 +144,22 @@ class TestXMLRPCOperations:
         ):
             authenticated_connection.execute_kw("res.partner", "unlink", [[1]], {})
 
+    def test_execute_kw_none_return_is_success_not_fault(self, authenticated_connection):
+        """Odoo's XML-RPC endpoint marshals with allow_none=False, so a method
+        that returns None (e.g. account.move.button_draft, payment action_cancel)
+        raises 'cannot marshal None' AFTER it already ran and committed. Treat
+        that as the successful void return it is, not a failure -- otherwise the
+        caller sees a false error and may retry a financial action that
+        succeeded. Verified live on Odoo 18 + 19."""
+        mock_proxy = Mock()
+        mock_proxy.execute_kw.side_effect = Fault(
+            1, "cannot marshal None unless allow_none is enabled"
+        )
+        authenticated_connection._object_proxy = mock_proxy
+
+        result = authenticated_connection.execute_kw("account.move", "button_draft", [[1]], {})
+        assert result is None  # void success, no exception
+
     def test_execute_kw_timeout(self, authenticated_connection):
         """Test execute_kw handles timeout."""
         # Mock object proxy

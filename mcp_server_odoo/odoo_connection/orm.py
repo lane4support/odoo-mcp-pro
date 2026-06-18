@@ -93,6 +93,21 @@ class OdooConnectionOrmMixin:
             return result
 
         except xmlrpc.client.Fault as e:
+            # Odoo's XML-RPC endpoint marshals responses with allow_none=False,
+            # so a method that legitimately returns None (e.g.
+            # account.move.button_draft, account.payment.action_cancel,
+            # stock.picking.button_validate on a full transfer) raises
+            # "cannot marshal None" *after* the method already ran and committed.
+            # Treat that as the successful void return it is — otherwise the
+            # caller sees a false failure and may retry a financial action that
+            # in fact succeeded (double post / double payment). Verified against
+            # Odoo 18 + 19: the state change persists despite this fault.
+            if "cannot marshal None" in (e.faultString or ""):
+                logger.debug(
+                    f"{method} on {model} returned None; XML-RPC cannot encode "
+                    f"None, treating as a successful void return"
+                )
+                return None
             logger.error(f"XML-RPC fault during {method} on {model}: {e}")
             # Sanitize the fault string before exposing to user
             sanitized_message = ErrorSanitizer.sanitize_xmlrpc_fault(e.faultString)
