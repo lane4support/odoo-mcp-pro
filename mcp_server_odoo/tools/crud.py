@@ -272,10 +272,13 @@ class CrudToolsMixin:
                 if not existing:
                     raise NotFoundError(f"Record not found: {model} with ID {record_id}")
 
-                # Store some info about the record before deletion
-                record_name = existing[0].get(
-                    "name", existing[0].get("display_name", f"ID {record_id}")
-                )
+                # Store some info about the record before deletion. Odoo returns
+                # `False` (not a missing key) for an empty char field, so a plain
+                # .get("name", default) yields False for unnamed records (e.g. a
+                # draft credit note). Fall through on any falsy value so
+                # deleted_name stays a string.
+                record = existing[0]
+                record_name = record.get("name") or record.get("display_name") or f"ID {record_id}"
 
                 # Delete the record
                 success = connection.unlink(model, [record_id])
