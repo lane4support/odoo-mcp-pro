@@ -17,7 +17,7 @@ from ..schemas import (
     BulkUpdateResult,
     ImportResult,
 )
-from ._common import MAX_BULK_SIZE, _current_sub, logger
+from ._common import MAX_BULK_SIZE, _current_sub, logger, run_blocking
 
 
 class BulkToolsMixin:
@@ -184,7 +184,9 @@ class BulkToolsMixin:
                         f"Bulk create limited to {MAX_BULK_SIZE} records, got {len(vals_list)}"
                     )
 
-                created_ids = connection.create_bulk(model, vals_list)
+                created_ids = await run_blocking(
+                    connection, connection.create_bulk, model, vals_list
+                )
 
                 return {
                     "success": True,
@@ -227,7 +229,7 @@ class BulkToolsMixin:
                         f"Bulk update limited to {MAX_BULK_SIZE} records, got {len(record_ids)}"
                     )
 
-                connection.write(model, record_ids, values)
+                await run_blocking(connection, connection.write, model, record_ids, values)
 
                 return {
                     "success": True,
@@ -267,7 +269,7 @@ class BulkToolsMixin:
                         f"Bulk delete limited to {MAX_BULK_SIZE} records, got {len(record_ids)}"
                     )
 
-                connection.unlink(model, record_ids)
+                await run_blocking(connection, connection.unlink, model, record_ids)
 
                 return {
                     "success": True,
@@ -337,7 +339,9 @@ class BulkToolsMixin:
                 # Ensure all values are strings (Odoo load() expects strings)
                 str_data = [[str(v) if v is not None else "" for v in row] for row in data]
 
-                result = connection.load_records(model, fields, str_data, safe_context)
+                result = await run_blocking(
+                    connection, connection.load_records, model, fields, str_data, safe_context
+                )
 
                 # Parse Odoo load() result
                 ids = result.get("ids", []) or []

@@ -13,7 +13,7 @@ from ..error_sanitizer import ErrorSanitizer
 from ..logging_config import perf_logger
 from ..odoo_connection import OdooConnectionError
 from ..schemas import FieldSelectionMetadata, RecordResult, SearchResult
-from ._common import _current_sub, logger
+from ._common import _current_sub, logger, run_blocking
 
 
 class QueryToolsMixin:
@@ -188,18 +188,30 @@ class QueryToolsMixin:
                     limit = self.config.default_limit
 
                 # Get total count
-                total_count = connection.search_count(model, parsed_domain)
+                total_count = await run_blocking(
+                    connection, connection.search_count, model, parsed_domain
+                )
 
                 # Search for records
-                record_ids = connection.search(
-                    model, parsed_domain, limit=limit, offset=offset, order=order
+                record_ids = await run_blocking(
+                    connection,
+                    connection.search,
+                    model,
+                    parsed_domain,
+                    limit=limit,
+                    offset=offset,
+                    order=order,
                 )
 
                 # Determine which fields to fetch
                 fields_to_fetch = parsed_fields
                 if parsed_fields is None:
-                    # Use smart field selection to avoid serialization issues
-                    fields_to_fetch = self._get_smart_default_fields(model, connection)
+                    # Use smart field selection to avoid serialization issues.
+                    # This may call connection.fields_get (network on a cold
+                    # cache), so run it off-loop under the connection lock.
+                    fields_to_fetch = await run_blocking(
+                        connection, self._get_smart_default_fields, model, connection
+                    )
                     logger.debug(
                         f"Using smart defaults for {model} search: {len(fields_to_fetch) if fields_to_fetch else 'all'} fields"
                     )
@@ -211,11 +223,18 @@ class QueryToolsMixin:
                 # Read records
                 records = []
                 if record_ids:
-                    records = connection.read(model, record_ids, fields_to_fetch)
-                    # Process datetime fields in each record
-                    records = [
-                        self._process_record_dates(record, model, connection) for record in records
-                    ]
+                    records = await run_blocking(
+                        connection, connection.read, model, record_ids, fields_to_fetch
+                    )
+                    # Process datetime fields in each record (may call
+                    # fields_get; keep it off the loop too).
+                    records = await run_blocking(
+                        connection,
+                        lambda recs: [
+                            self._process_record_dates(record, model, connection) for record in recs
+                        ],
+                        records,
+                    )
 
                 return {
                     "records": records,
@@ -258,8 +277,10 @@ class QueryToolsMixin:
                 field_selection_method = "explicit"
 
                 if fields is None:
-                    # Use smart field selection
-                    fields_to_fetch = self._get_smart_default_fields(model, connection)
+                    # Use smart field selection (may hit fields_get -> off-loop)
+                    fields_to_fetch = await run_blocking(
+                        connection, self._get_smart_default_fields, model, connection
+                    )
                     use_smart_defaults = True
                     field_selection_method = "smart_defaults"
                     logger.debug(
@@ -275,19 +296,25 @@ class QueryToolsMixin:
                     logger.debug(f"Fetching specific fields for {model}: {fields}")
 
                 # Read the record
-                records = connection.read(model, [record_id], fields_to_fetch)
+                records = await run_blocking(
+                    connection, connection.read, model, [record_id], fields_to_fetch
+                )
 
                 if not records:
                     raise ValidationError(f"Record not found: {model} with ID {record_id}")
 
-                # Process datetime fields in the record
-                record = self._process_record_dates(records[0], model, connection)
+                # Process datetime fields in the record (may call fields_get)
+                record = await run_blocking(
+                    connection, self._process_record_dates, records[0], model, connection
+                )
 
                 # Build metadata when using smart defaults
                 metadata = None
                 if use_smart_defaults:
                     try:
-                        all_fields_info = connection.fields_get(model)
+                        all_fields_info = await run_blocking(
+                            connection, connection.fields_get, model
+                        )
                         total_fields = len(all_fields_info)
                     except Exception:
                         pass

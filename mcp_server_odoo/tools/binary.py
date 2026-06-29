@@ -21,6 +21,7 @@ from ._common import (
     MAX_BINARY_SIZE_BYTES,
     _current_sub,
     logger,
+    run_blocking,
 )
 
 
@@ -160,12 +161,14 @@ class BinaryToolsMixin:
                         raise ValidationError("Source produced zero bytes")
 
                     # --- Validate record exists ---
-                    existing = connection.read(model, [record_id], ["id"])
+                    existing = await run_blocking(
+                        connection, connection.read, model, [record_id], ["id"]
+                    )
                     if not existing:
                         raise NotFoundError(f"Record not found: {model} with ID {record_id}")
 
                     # --- Validate field type + auto-redirect avatar_* ---
-                    fields_info = connection.fields_get(model)
+                    fields_info = await run_blocking(connection, connection.fields_get, model)
                     if not isinstance(fields_info, dict):
                         raise ValidationError(f"Could not introspect fields of {model}")
 
@@ -214,7 +217,9 @@ class BinaryToolsMixin:
 
                     # --- Write (Odoo ORM creates/updates backing ir.attachment) ---
                     b64 = base64.b64encode(raw_bytes).decode("ascii")
-                    success = connection.write(model, [record_id], {target_field: b64})
+                    success = await run_blocking(
+                        connection, connection.write, model, [record_id], {target_field: b64}
+                    )
 
                     base_url = (
                         getattr(connection, "_base_url", None)
