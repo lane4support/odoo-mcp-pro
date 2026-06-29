@@ -47,6 +47,7 @@ class BinaryToolsMixin:
             record_id: int,
             field_name: str,
             source: str,
+            connection: Optional[str] = None,
         ) -> BinaryFieldResult:
             """Upload bytes into a Binary or Image field on an existing record.
 
@@ -81,11 +82,16 @@ class BinaryToolsMixin:
                 record_id: ID of the record to update
                 field_name: Binary or Image field name on that model
                 source: http(s) URL the server will fetch. Max 25 MB.
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Written field name, size in bytes, and record URL.
             """
-            result = await self._handle_set_binary_field_tool(model, record_id, field_name, source)
+            result = await self._handle_set_binary_field_tool(
+                model, record_id, field_name, source, connection
+            )
             self._track_usage(_current_sub.get(), "set_binary_field")
             return BinaryFieldResult(**result)
 
@@ -95,6 +101,7 @@ class BinaryToolsMixin:
         record_id: int,
         field_name: str,
         source: str,
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle set_binary_field tool request.
 
@@ -105,7 +112,9 @@ class BinaryToolsMixin:
         """
         try:
             async with _BINARY_UPLOAD_SEMAPHORE:
-                connection, access_controller, sub = await self._get_user_context()
+                connection, access_controller, sub = await self._get_user_context(
+                    connection_selector
+                )
                 with perf_logger.track_operation("tool_set_binary_field", model=model):
                     access_controller.validate_model_access(model, "write")
                     if not connection.is_authenticated:

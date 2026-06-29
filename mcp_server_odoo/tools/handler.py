@@ -56,11 +56,16 @@ class OdooToolHandler(
 
     async def _get_user_context(
         self,
+        connection: Optional[str] = None,
     ) -> Tuple[OdooConnectionProtocol, AccessController, str]:
         """Get connection and access controller for the current request.
 
         Admin extension hook: the private SaaS package overrides this to
         resolve a per-user connection from the authenticated subject.
+
+        Args:
+            connection: optional connection selector, honored only by the
+                multi-tenant hosted handler; ignored in single-connection mode.
 
         Returns:
             Tuple of (connection, access_controller, sub)
@@ -73,6 +78,16 @@ class OdooToolHandler(
             return self.connection, self.access_controller, "stdio"
 
         raise ValidationError("No Odoo connection available")
+
+    async def _available_connections(self) -> Optional[list]:
+        """List the connections this handler can target, for server_info.
+
+        Overridable hook: the multi-tenant hosted handler returns a list of
+        ``{"id": ..., "url": ..., "db": ...}`` dicts so clients can pass a
+        per-call ``connection`` selector. Standalone returns None, so
+        server_info simply omits the ``connections`` key.
+        """
+        return None
 
     def _track_usage(self, sub: str, tool_name: str) -> None:
         """Usage tracking hook. No-op here; overridden by the SaaS layer."""

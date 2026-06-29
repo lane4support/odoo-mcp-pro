@@ -328,3 +328,12 @@ class ServerInfoResult(BaseModel):
         default_factory=list,
         description="Available companies in the Odoo instance (id and name). Use company_id in search domains to filter by company.",
     )
+    connections: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "Connections this caller may target, each {id, url, db}. Pass the id "
+            "as the `connection` argument on any tool to target that connection. "
+            "Only present on hosted multi-tenant servers; absent (None) when "
+            "self-hosting a single connection."
+        ),
+    )

@@ -40,6 +40,7 @@ class BulkToolsMixin:
         async def create_records(
             model: str,
             vals_list: List[Dict[str, Any]],
+            connection: Optional[str] = None,
         ) -> BulkCreateResult:
             """Create multiple records in a single operation (max 1000).
 
@@ -51,11 +52,14 @@ class BulkToolsMixin:
                 model: The Odoo model name (e.g., 'res.partner')
                 vals_list: List of dicts, each containing field values for one record.
                     Example: [{"name": "Alice"}, {"name": "Bob"}]
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 List of created record IDs with count and confirmation.
             """
-            result = await self._handle_create_records_tool(model, vals_list)
+            result = await self._handle_create_records_tool(model, vals_list, connection)
             self._track_usage(_current_sub.get(), "create_records")
             return BulkCreateResult(**result)
 
@@ -72,6 +76,7 @@ class BulkToolsMixin:
             model: str,
             record_ids: List[int],
             values: Dict[str, Any],
+            connection: Optional[str] = None,
         ) -> BulkUpdateResult:
             """Update multiple records with the same values in a single operation (max 1000).
 
@@ -82,11 +87,14 @@ class BulkToolsMixin:
                 model: The Odoo model name (e.g., 'res.partner')
                 record_ids: List of record IDs to update
                 values: Field values to apply to all specified records
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 List of updated record IDs with count and confirmation.
             """
-            result = await self._handle_update_records_tool(model, record_ids, values)
+            result = await self._handle_update_records_tool(model, record_ids, values, connection)
             self._track_usage(_current_sub.get(), "update_records")
             return BulkUpdateResult(**result)
 
@@ -102,17 +110,21 @@ class BulkToolsMixin:
         async def delete_records(
             model: str,
             record_ids: List[int],
+            connection: Optional[str] = None,
         ) -> BulkDeleteResult:
             """Delete multiple records in a single operation (max 1000).
 
             Args:
                 model: The Odoo model name (e.g., 'res.partner')
                 record_ids: List of record IDs to delete
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 List of deleted record IDs with count and confirmation.
             """
-            result = await self._handle_delete_records_tool(model, record_ids)
+            result = await self._handle_delete_records_tool(model, record_ids, connection)
             self._track_usage(_current_sub.get(), "delete_records")
             return BulkDeleteResult(**result)
 
@@ -132,6 +144,7 @@ class BulkToolsMixin:
             fields: List[str],
             data: List[List[str]],
             context: Optional[Dict[str, Any]] = None,
+            connection: Optional[str] = None,
         ) -> ImportResult:
             """Import records using Odoo's native load() method with external ID support.
 
@@ -155,11 +168,16 @@ class BulkToolsMixin:
                 context: Optional context dict. Useful flags:
                     - tracking_disable: True — suppress mail/activity notifications
                     - defer_fields_computation: True — batch computed field updates
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Import result with counts of created/updated records and any errors.
             """
-            result = await self._handle_import_records_tool(model, fields, data, context)
+            result = await self._handle_import_records_tool(
+                model, fields, data, context, connection
+            )
             self._track_usage(_current_sub.get(), "import_records")
             return ImportResult(**result)
 
@@ -169,10 +187,11 @@ class BulkToolsMixin:
         self,
         model: str,
         vals_list: List[Dict[str, Any]],
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle bulk create tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_create_records", model=model):
                 access_controller.validate_model_access(model, "create")
                 if not connection.is_authenticated:
@@ -212,10 +231,11 @@ class BulkToolsMixin:
         model: str,
         record_ids: List[int],
         values: Dict[str, Any],
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle bulk update tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_update_records", model=model):
                 access_controller.validate_model_access(model, "write")
                 if not connection.is_authenticated:
@@ -254,10 +274,11 @@ class BulkToolsMixin:
         self,
         model: str,
         record_ids: List[int],
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle bulk delete tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_delete_records", model=model):
                 access_controller.validate_model_access(model, "unlink")
                 if not connection.is_authenticated:
@@ -296,10 +317,11 @@ class BulkToolsMixin:
         fields: List[str],
         data: List[List[str]],
         context: Optional[Dict[str, Any]] = None,
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle import_records tool request using Odoo's load() method."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_import_records", model=model):
                 access_controller.validate_model_access(model, "create")
                 access_controller.validate_model_access(model, "write")

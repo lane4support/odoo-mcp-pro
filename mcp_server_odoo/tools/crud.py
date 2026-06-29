@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp.types import ToolAnnotations
 
@@ -33,17 +33,21 @@ class CrudToolsMixin:
         async def create_record(
             model: str,
             values: Dict[str, Any],
+            connection: Optional[str] = None,
         ) -> CreateResult:
             """Create a new record in an Odoo model.
 
             Args:
                 model: The Odoo model name (e.g., 'res.partner')
                 values: Field values for the new record
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Created record details with ID, URL, and confirmation.
             """
-            result = await self._handle_create_record_tool(model, values)
+            result = await self._handle_create_record_tool(model, values, connection)
             self._track_usage(_current_sub.get(), "create_record")
             return CreateResult(**result)
 
@@ -60,6 +64,7 @@ class CrudToolsMixin:
             model: str,
             record_id: int,
             values: Dict[str, Any],
+            connection: Optional[str] = None,
         ) -> UpdateResult:
             """Update an existing record.
 
@@ -67,11 +72,14 @@ class CrudToolsMixin:
                 model: The Odoo model name (e.g., 'res.partner')
                 record_id: The record ID to update
                 values: Field values to update
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Updated record details with confirmation.
             """
-            result = await self._handle_update_record_tool(model, record_id, values)
+            result = await self._handle_update_record_tool(model, record_id, values, connection)
             self._track_usage(_current_sub.get(), "update_record")
             return UpdateResult(**result)
 
@@ -87,17 +95,21 @@ class CrudToolsMixin:
         async def delete_record(
             model: str,
             record_id: int,
+            connection: Optional[str] = None,
         ) -> DeleteResult:
             """Delete a record.
 
             Args:
                 model: The Odoo model name (e.g., 'res.partner')
                 record_id: The record ID to delete
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Deletion confirmation with the deleted record's name and ID.
             """
-            result = await self._handle_delete_record_tool(model, record_id)
+            result = await self._handle_delete_record_tool(model, record_id, connection)
             self._track_usage(_current_sub.get(), "delete_record")
             return DeleteResult(**result)
 
@@ -105,10 +117,11 @@ class CrudToolsMixin:
         self,
         model: str,
         values: Dict[str, Any],
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle create record tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_create_record", model=model):
                 # Check model access
                 access_controller.validate_model_access(model, "create")
@@ -183,10 +196,11 @@ class CrudToolsMixin:
         model: str,
         record_id: int,
         values: Dict[str, Any],
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle update record tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_update_record", model=model):
                 # Check model access
                 access_controller.validate_model_access(model, "write")
@@ -271,10 +285,11 @@ class CrudToolsMixin:
         self,
         model: str,
         record_id: int,
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle delete record tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_delete_record", model=model):
                 # Check model access
                 access_controller.validate_model_access(model, "unlink")
