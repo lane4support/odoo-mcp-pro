@@ -10,7 +10,7 @@ from ..error_handling import ValidationError
 from ..error_sanitizer import ErrorSanitizer
 from ..logging_config import perf_logger
 from ..schemas import ModelsResult, ResourceTemplatesResult, ServerInfoResult
-from ._common import _current_sub, logger
+from ._common import _current_sub, logger, run_blocking
 
 
 class IntrospectionToolsMixin:
@@ -111,8 +111,13 @@ class IntrospectionToolsMixin:
             companies = []
             if is_connected:
                 try:
-                    companies = connection.search_read(
-                        "res.company", [], fields=["id", "name"], limit=10
+                    companies = await run_blocking(
+                        connection,
+                        connection.search_read,
+                        "res.company",
+                        [],
+                        fields=["id", "name"],
+                        limit=10,
                     )
                 except Exception:
                     pass
@@ -142,7 +147,9 @@ class IntrospectionToolsMixin:
                 # handles ACLs server-side. Fetch models from ir.model instead.
                 if not models and hasattr(connection, "search_read"):
                     try:
-                        ir_models = connection.search_read(
+                        ir_models = await run_blocking(
+                            connection,
+                            connection.search_read,
                             "ir.model",
                             [["transient", "=", False]],
                             fields=["model", "name"],

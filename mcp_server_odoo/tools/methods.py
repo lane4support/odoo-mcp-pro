@@ -23,7 +23,7 @@ from ..error_sanitizer import ErrorSanitizer
 from ..logging_config import perf_logger
 from ..odoo_connection import OdooConnectionError
 from ..schemas import ExecuteMethodResult
-from ._common import _current_sub, logger
+from ._common import _current_sub, logger, run_blocking
 from .wizards import WizardHandler, followup_descriptor, get_handler
 
 _ACTION_SHAPE_KEYS = ("view_mode", "views", "target", "res_id", "domain")
@@ -163,15 +163,29 @@ class MethodsToolsMixin:
                 if not connection.is_authenticated:
                     raise ValidationError("Not authenticated with Odoo")
 
-                value = connection.call_method(model, method, ids=ids, **(kwargs or {}))
+                value = await run_blocking(
+                    connection, connection.call_method, model, method, ids=ids, **(kwargs or {})
+                )
 
                 kind = _classify_result(value)
 
                 if kind == "action":
                     handler = get_handler(value)
                     if handler is not None:
-                        return self._drive_wizard(
-                            connection, handler, value, decision, model, method, ids or []
+                        # _drive_wizard issues further blocking RPC (handler.apply
+                        # -> connection.*); run it off-loop under the same
+                        # connection lock so the wizard completion can't block
+                        # other tenants and can't race the transport.
+                        return await run_blocking(
+                            connection,
+                            self._drive_wizard,
+                            connection,
+                            handler,
+                            value,
+                            decision,
+                            model,
+                            method,
+                            ids or [],
                         )
                     # Known method, but it needs a follow-up wizard we have NOT
                     # validated. We refuse rather than guess: an un-vetted

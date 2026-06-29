@@ -13,7 +13,7 @@ from ..error_sanitizer import ErrorSanitizer
 from ..logging_config import perf_logger
 from ..odoo_connection import OdooConnectionError
 from ..schemas import PostMessageResult
-from ._common import _current_sub, logger
+from ._common import _current_sub, logger, run_blocking
 
 
 class MessagingToolsMixin:
@@ -102,7 +102,14 @@ class MessagingToolsMixin:
 
         Future tools (post_invoice, confirm_sale_order, etc.) reuse this.
         """
-        return connection.call_method(model, method, ids=list(record_ids), **(kwargs or {}))
+        return await run_blocking(
+            connection,
+            connection.call_method,
+            model,
+            method,
+            ids=list(record_ids),
+            **(kwargs or {}),
+        )
 
     async def _handle_post_message_tool(
         self,
@@ -129,7 +136,9 @@ class MessagingToolsMixin:
                     raise ValidationError("body is required and cannot be empty")
 
                 # Verify record exists
-                existing = connection.read(model, [record_id], ["id"])
+                existing = await run_blocking(
+                    connection, connection.read, model, [record_id], ["id"]
+                )
                 if not existing:
                     raise NotFoundError(f"Record not found: {model} with ID {record_id}")
 
@@ -189,17 +198,25 @@ class MessagingToolsMixin:
                     # x_microsoft_message_id only exists when pan_outlook_pro is installed
                     outlook_field = "x_microsoft_message_id"
                     try:
-                        available = connection.fields_get(
-                            "mail.message", [outlook_field], allfields=False
+                        available = await run_blocking(
+                            connection,
+                            connection.fields_get,
+                            "mail.message",
+                            [outlook_field],
+                            allfields=False,
                         )
                     except TypeError:
-                        available = connection.fields_get("mail.message", [outlook_field])
+                        available = await run_blocking(
+                            connection, connection.fields_get, "mail.message", [outlook_field]
+                        )
                     except Exception:
                         available = {}
                     if outlook_field in (available or {}):
                         msg_fields.append(outlook_field)
 
-                    msg_rows = connection.read("mail.message", [message_id], msg_fields)
+                    msg_rows = await run_blocking(
+                        connection, connection.read, "mail.message", [message_id], msg_fields
+                    )
                     msg = msg_rows[0] if msg_rows else {}
                     subtype_pair = msg.get("subtype_id")
                     subtype_name = (
@@ -225,7 +242,9 @@ class MessagingToolsMixin:
                 # Read notifications fan-out
                 notifications: List[Dict[str, Any]] = []
                 try:
-                    notif_rows = connection.search_read(
+                    notif_rows = await run_blocking(
+                        connection,
+                        connection.search_read,
                         "mail.notification",
                         [("mail_message_id", "=", message_id)],
                         [

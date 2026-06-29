@@ -12,7 +12,7 @@ from ..error_sanitizer import ErrorSanitizer
 from ..logging_config import perf_logger
 from ..odoo_connection import OdooConnectionError
 from ..schemas import CreateResult, DeleteResult, UpdateResult
-from ._common import _current_sub, logger
+from ._common import _current_sub, logger, run_blocking
 
 
 class CrudToolsMixin:
@@ -122,7 +122,7 @@ class CrudToolsMixin:
                     raise ValidationError("No values provided for record creation")
 
                 # Create the record
-                record_id = connection.create(model, values)
+                record_id = await run_blocking(connection, connection.create, model, values)
 
                 # Return only essential fields to minimize context usage
                 # Users can use get_record if they need more fields
@@ -130,7 +130,9 @@ class CrudToolsMixin:
 
                 # Filter to fields that actually exist on this model
                 try:
-                    model_fields = connection.fields_get(model, ["string", "type"])
+                    model_fields = await run_blocking(
+                        connection, connection.fields_get, model, ["string", "type"]
+                    )
                     essential_fields = [f for f in essential_fields if f in model_fields]
                     if "id" not in essential_fields:
                         essential_fields.insert(0, "id")
@@ -138,14 +140,18 @@ class CrudToolsMixin:
                     essential_fields = ["id"]
 
                 # Read only the essential fields
-                records = connection.read(model, [record_id], essential_fields)
+                records = await run_blocking(
+                    connection, connection.read, model, [record_id], essential_fields
+                )
                 if not records:
                     raise ValidationError(
                         f"Failed to read created record: {model} with ID {record_id}"
                     )
 
                 # Process dates in the minimal record
-                record = self._process_record_dates(records[0], model, connection)
+                record = await run_blocking(
+                    connection, self._process_record_dates, records[0], model, connection
+                )
 
                 # Generate direct URL to the record in Odoo
                 base_url = (
@@ -194,12 +200,16 @@ class CrudToolsMixin:
                     raise ValidationError("No values provided for record update")
 
                 # Check if record exists (only fetch ID to verify existence)
-                existing = connection.read(model, [record_id], ["id"])
+                existing = await run_blocking(
+                    connection, connection.read, model, [record_id], ["id"]
+                )
                 if not existing:
                     raise NotFoundError(f"Record not found: {model} with ID {record_id}")
 
                 # Update the record
-                success = connection.write(model, [record_id], values)
+                success = await run_blocking(
+                    connection, connection.write, model, [record_id], values
+                )
 
                 # Return only essential fields to minimize context usage
                 # Users can use get_record if they need more fields
@@ -207,7 +217,9 @@ class CrudToolsMixin:
 
                 # Filter to fields that actually exist on this model
                 try:
-                    model_fields = connection.fields_get(model, ["string", "type"])
+                    model_fields = await run_blocking(
+                        connection, connection.fields_get, model, ["string", "type"]
+                    )
                     essential_fields = [f for f in essential_fields if f in model_fields]
                     if "id" not in essential_fields:
                         essential_fields.insert(0, "id")
@@ -215,14 +227,18 @@ class CrudToolsMixin:
                     essential_fields = ["id"]
 
                 # Read only the essential fields
-                records = connection.read(model, [record_id], essential_fields)
+                records = await run_blocking(
+                    connection, connection.read, model, [record_id], essential_fields
+                )
                 if not records:
                     raise ValidationError(
                         f"Failed to read updated record: {model} with ID {record_id}"
                     )
 
                 # Process dates in the minimal record
-                record = self._process_record_dates(records[0], model, connection)
+                record = await run_blocking(
+                    connection, self._process_record_dates, records[0], model, connection
+                )
 
                 # Generate direct URL to the record in Odoo
                 base_url = (
@@ -268,7 +284,7 @@ class CrudToolsMixin:
                     raise ValidationError("Not authenticated with Odoo")
 
                 # Check if record exists
-                existing = connection.read(model, [record_id])
+                existing = await run_blocking(connection, connection.read, model, [record_id])
                 if not existing:
                     raise NotFoundError(f"Record not found: {model} with ID {record_id}")
 
@@ -281,7 +297,7 @@ class CrudToolsMixin:
                 record_name = record.get("name") or record.get("display_name") or f"ID {record_id}"
 
                 # Delete the record
-                success = connection.unlink(model, [record_id])
+                success = await run_blocking(connection, connection.unlink, model, [record_id])
 
                 return {
                     "success": success,
