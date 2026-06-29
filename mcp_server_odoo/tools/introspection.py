@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp.types import ToolAnnotations
 
@@ -28,14 +28,19 @@ class IntrospectionToolsMixin:
                 openWorldHint=False,
             ),
         )
-        async def list_models() -> ModelsResult:
+        async def list_models(connection: Optional[str] = None) -> ModelsResult:
             """List all models enabled for MCP access with their allowed operations.
+
+            Args:
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 List of models with their technical names, display names,
                 and allowed operations (read, write, create, unlink).
             """
-            result = await self._handle_list_models_tool()
+            result = await self._handle_list_models_tool(connection)
             self._track_usage(_current_sub.get(), "list_models")
             return ModelsResult(**result)
 
@@ -123,7 +128,7 @@ class IntrospectionToolsMixin:
                     pass
 
             self._track_usage(_current_sub.get(), "server_info")
-            return ServerInfoResult(
+            info = ServerInfoResult(
                 version=SERVER_VERSION,
                 git_commit=GIT_COMMIT,
                 api_version=api_version,
@@ -135,10 +140,21 @@ class IntrospectionToolsMixin:
                 companies=companies,
             )
 
-    async def _handle_list_models_tool(self) -> Dict[str, Any]:
+            # Multi-tenant hook: the hosted handler can list the connections the
+            # caller may target (so they can pass a per-call `connection`
+            # selector). Standalone returns None, so the key is simply absent.
+            available = await self._available_connections()
+            if available is not None:
+                info.connections = available
+
+            return info
+
+    async def _handle_list_models_tool(
+        self, connection_selector: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Handle list models tool request with permissions."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_list_models"):
                 # Get models from MCP access controller
                 models = access_controller.get_enabled_models()

@@ -42,6 +42,7 @@ class MessagingToolsMixin:
             attachment_ids: Optional[List[int]] = None,
             subtype_xmlid: str = "mail.mt_comment",
             cc: Optional[str] = None,
+            connection: Optional[str] = None,
         ) -> PostMessageResult:
             """Post a message in the chatter of any thread-enabled Odoo record.
 
@@ -67,6 +68,9 @@ class MessagingToolsMixin:
                     or 'mail.mt_note' (silent internal note, hidden from portal users).
                 cc: Comma-separated extra emails to notify (Odoo v19+ only).
                     On older Odoos this raises a clear error.
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Posted mail.message details including per-recipient delivery state
@@ -82,6 +86,7 @@ class MessagingToolsMixin:
                 attachment_ids=attachment_ids,
                 subtype_xmlid=subtype_xmlid,
                 cc=cc,
+                connection_selector=connection,
             )
             self._track_usage(_current_sub.get(), "post_message")
             return PostMessageResult(**result)
@@ -121,10 +126,11 @@ class MessagingToolsMixin:
         attachment_ids: Optional[List[int]] = None,
         subtype_xmlid: str = "mail.mt_comment",
         cc: Optional[str] = None,
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle post_message tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_post_message", model=model):
                 # Posting to chatter requires write access on the model
                 access_controller.validate_model_access(model, "write")

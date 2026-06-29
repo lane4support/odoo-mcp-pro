@@ -38,6 +38,7 @@ class QueryToolsMixin:
             limit: int = 100,
             offset: int = 0,
             order: Optional[str] = None,
+            connection: Optional[str] = None,
         ) -> SearchResult:
             """Search for records in an Odoo model.
 
@@ -55,11 +56,16 @@ class QueryToolsMixin:
                 limit: Maximum number of records to return
                 offset: Number of records to skip
                 order: Sort order (e.g., 'name asc')
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 Search results with records, total count, and pagination info
             """
-            result = await self._handle_search_tool(model, domain, fields, limit, offset, order)
+            result = await self._handle_search_tool(
+                model, domain, fields, limit, offset, order, connection
+            )
             self._track_usage(_current_sub.get(), "search_records")
             return SearchResult(**result)
 
@@ -76,6 +82,7 @@ class QueryToolsMixin:
             model: str,
             record_id: int,
             fields: Optional[List[str]] = None,
+            connection: Optional[str] = None,
         ) -> RecordResult:
             """Get a specific record by ID with smart field selection.
 
@@ -106,11 +113,16 @@ class QueryToolsMixin:
                 # Get ALL fields (use with caution)
                 get_record("res.partner", 1, fields=["__all__"])
 
+            Args:
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
+
             Returns:
                 Record data with requested fields. When using smart defaults,
                 includes metadata with field statistics.
             """
-            result = await self._handle_get_record_tool(model, record_id, fields)
+            result = await self._handle_get_record_tool(model, record_id, fields, connection)
             self._track_usage(_current_sub.get(), "get_record")
             return result
 
@@ -122,10 +134,11 @@ class QueryToolsMixin:
         limit: int,
         offset: int,
         order: Optional[str],
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle search tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_search", model=model):
                 # Check model access
                 access_controller.validate_model_access(model, "read")
@@ -258,10 +271,11 @@ class QueryToolsMixin:
         model: str,
         record_id: int,
         fields: Optional[List[str]],
+        connection_selector: Optional[str] = None,
     ) -> RecordResult:
         """Handle get record tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_get_record", model=model):
                 # Check model access
                 access_controller.validate_model_access(model, "read")

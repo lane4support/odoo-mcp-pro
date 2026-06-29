@@ -90,6 +90,7 @@ class MethodsToolsMixin:
             ids: Optional[List[int]] = None,
             kwargs: Optional[Dict[str, Any]] = None,
             decision: Optional[Dict[str, Any]] = None,
+            connection: Optional[str] = None,
         ) -> ExecuteMethodResult:
             """Call a public method on an Odoo model or recordset.
 
@@ -122,6 +123,9 @@ class MethodsToolsMixin:
                     (e.g. register-payment: full residual, today, default
                     journal). An omitted decision discovers; any provided
                     decision -- even {} -- completes.
+                connection: Optional. Target a specific Odoo connection by the id
+                    from server_info's `connections` list. Hosted multi-tenant
+                    only; ignored when self-hosting a single connection.
 
             Returns:
                 The raw return value, classified as a plain value, record ids, an
@@ -129,7 +133,7 @@ class MethodsToolsMixin:
                 a known wizard was driven to the end for you.
             """
             result = await self._handle_execute_method_tool(
-                model, method, ids, kwargs, decision=decision
+                model, method, ids, kwargs, decision=decision, connection_selector=connection
             )
             self._track_usage(_current_sub.get(), "execute_method")
             return ExecuteMethodResult(**result)
@@ -141,10 +145,11 @@ class MethodsToolsMixin:
         ids: Optional[List[int]] = None,
         kwargs: Optional[Dict[str, Any]] = None,
         decision: Optional[Dict[str, Any]] = None,
+        connection_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Handle execute_method tool request."""
         try:
-            connection, access_controller, sub = await self._get_user_context()
+            connection, access_controller, sub = await self._get_user_context(connection_selector)
             with perf_logger.track_operation("tool_execute_method", model=model):
                 if not method or not method.strip():
                     raise ValidationError("method is required")
